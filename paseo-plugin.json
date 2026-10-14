@@ -1,0 +1,8 @@
+{
+  "id": "diff-review",
+  "name": "Diff Review",
+  "description": "Unstaged workspace and submodule diffs with review progress, comments, and send-to-agent",
+  "requirements": {
+    "paseo": ">=0.11.0"
+  }
+}

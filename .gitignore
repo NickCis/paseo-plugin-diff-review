@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build / typecheck artifacts
+dist/
+*.tsbuildinfo
+
+# Logs and caches
+*.log
+npm-debug.log*
+.npm/
+.cache/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Env / local secrets
+.env
+.env.*
+!.env.example
