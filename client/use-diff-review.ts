@@ -18,6 +18,7 @@ import {
 import { treeOrderedFiles } from "./file-tree";
 import { sendDiffReview, type SendTarget } from "./send-review";
 import {
+  diffDiscardRpc,
   diffHunksRpc,
   diffSnapshotRpc,
   diffStageRpc,
@@ -60,6 +61,7 @@ export function useDiffReview(workspaceId: string) {
   const snapshot = useRpc(diffSnapshotRpc);
   const loadHunks = useRpc(diffHunksRpc);
   const stage = useRpc(diffStageRpc);
+  const discard = useRpc(diffDiscardRpc);
 
   const [files, setFiles] = useState<DiffFile[]>([]);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
@@ -281,6 +283,22 @@ export function useDiffReview(workspaceId: string) {
     [progress, saveProgress, selectNextFile, workspaceId],
   );
 
+  const discardFile = useCallback(
+    async (pathKey: string): Promise<string | null> => {
+      if (!cwd) return "Workspace directory unavailable";
+      try {
+        const result = await discard({ cwd, pathKey });
+        if (!result.ok) return result.error ?? "Could not discard file changes";
+        selectNextFile(pathKey);
+        await refreshSnapshot();
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+    [cwd, discard, refreshSnapshot, selectNextFile],
+  );
+
   useEffect(() => {
     if (!cwd || !selectedPathKey) {
       setHunks([]);
@@ -437,6 +455,7 @@ export function useDiffReview(workspaceId: string) {
     typography,
     toggleViewed,
     ignoreFile,
+    discardFile,
     selectFile,
     onChangeFileComment,
     onSaveLineComment,

@@ -36,7 +36,8 @@ host settings, so every client on that daemon shares the same review state.
    - **Viewed** — mark done and advance to the next unfinished file
    - Comment icon — whole-file note
    - Ignore — skip the file and advance
-   - ⋯ — **View file** when the host can open the editor
+   - ⋯ — **View file** when the host can open the editor; **Discard changes** to
+     revert unstaged worktree changes for that file (staged/index changes are left alone)
 4. Inline comments: drag a range on web, or tap two lines on native. Expand context between
    hunks when needed. Ctrl/Cmd+Enter saves a comment.
    - Web keyboard shortcuts (not while typing in a comment box):

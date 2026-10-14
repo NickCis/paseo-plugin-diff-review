@@ -38,6 +38,8 @@ interface DiffViewProps {
   onToggleViewed(): void;
   onIgnore(): void;
   onViewFile(): void;
+  /** Returns an error message, or null on success. */
+  onDiscardFile(): Promise<string | null>;
   onChangeFileComment(body: string): Promise<boolean>;
   onSaveLineComment(comment: LineComment): Promise<boolean>;
   onDeleteLineComment(comment: Pick<LineComment, "side" | "startLine" | "endLine">): Promise<boolean>;
@@ -405,6 +407,7 @@ export function DiffView({
   onToggleViewed,
   onIgnore,
   onViewFile,
+  onDiscardFile,
   onChangeFileComment,
   onSaveLineComment,
   onDeleteLineComment,
@@ -813,6 +816,7 @@ export function DiffView({
       onCommentOpenChange={setFileCommentOpen}
       onSaveFileComment={onChangeFileComment}
       onViewFile={onViewFile}
+      onDiscardFile={onDiscardFile}
     />
   );
 

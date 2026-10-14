@@ -63,6 +63,19 @@ export const diffStageRpc = defineRpc({
   }),
 });
 
+export const diffDiscardRpc = defineRpc({
+  name: "diff.discard",
+  input: z.object({
+    cwd: z.string().min(1),
+    pathKey: z.string().min(1),
+  }),
+  output: z.object({
+    pathKey: z.string(),
+    ok: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const diffContextRpc = defineRpc({
   name: "diff.context",
   input: z.object({

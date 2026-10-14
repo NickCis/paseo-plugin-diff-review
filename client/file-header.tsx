@@ -24,6 +24,8 @@ interface FileHeaderProps {
   onCommentOpenChange(open: boolean): void;
   onSaveFileComment(body: string): Promise<boolean>;
   onViewFile(): void;
+  /** Returns an error message, or null on success. */
+  onDiscardFile(): Promise<string | null>;
 }
 
 export function FileHeader({
@@ -40,14 +42,17 @@ export function FileHeader({
   onCommentOpenChange,
   onSaveFileComment,
   onViewFile,
+  onDiscardFile,
 }: FileHeaderProps) {
   const toast = useToast();
   const palette = useMemo(() => diffPalette(theme), [theme]);
   const viewed = progress.status === "seen";
   const ignored = progress.status === "ignored";
+  const canDiscard = file.path !== ".";
   const [menuOpen, setMenuOpen] = useState(false);
   const [draft, setDraft] = useState(progress.fileComment ?? "");
   const [savingComment, setSavingComment] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
 
   const styles = useMemo(
     () => ({
@@ -160,6 +165,7 @@ export function FileHeader({
         paddingHorizontal: 12,
       },
       menuText: { color: theme.colors.foreground, fontSize: 13, fontWeight: "500" as const },
+      menuDanger: { color: theme.colors.statusDanger, fontSize: 13, fontWeight: "500" as const },
       menuMuted: { color: theme.colors.foregroundMuted, fontSize: 11, marginTop: 2 },
       input: {
         minHeight: 120,
@@ -240,6 +246,24 @@ export function FileHeader({
     }
     onViewFile();
   }, [canViewFile, onViewFile, toast]);
+
+  const discardFile = useCallback(() => {
+    if (discarding) return;
+    setMenuOpen(false);
+    if (!canDiscard) {
+      toast.error("Cannot discard a submodule placeholder.");
+      return;
+    }
+    setDiscarding(true);
+    void (async () => {
+      try {
+        const error = await onDiscardFile();
+        if (error) toast.error(error);
+      } finally {
+        setDiscarding(false);
+      }
+    })();
+  }, [canDiscard, discarding, onDiscardFile, toast]);
 
   useEffect(() => {
     if (!menuOpen || platform !== "web") return;
@@ -354,6 +378,21 @@ export function FileHeader({
                       Requires a host that can open the editor
                     </Text>
                   ) : null}
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={discarding || !canDiscard}
+                  onPress={discardFile}
+                  style={styles.menuItem}
+                >
+                  <Text style={styles.menuDanger}>
+                    {discarding ? "Discarding…" : "Discard changes"}
+                  </Text>
+                  <Text style={styles.menuMuted}>
+                    {canDiscard
+                      ? "Revert unstaged worktree changes for this file"
+                      : "Submodule placeholder cannot be discarded"}
+                  </Text>
                 </Pressable>
               </View>
             ) : null}

@@ -53,6 +53,11 @@ export function DiffReviewPanel({
     }
     toast.error("This host cannot open files in the editor yet.");
   }, [hostNavigation, selectedPathKey, toast, workspaceId]);
+  const discardFile = review.discardFile;
+  const onDiscardFile = useCallback(async () => {
+    if (!selectedPathKey) return "No file selected";
+    return discardFile(selectedPathKey);
+  }, [discardFile, selectedPathKey]);
 
   const styles = useMemo(
     () => ({
@@ -207,6 +212,7 @@ export function DiffReviewPanel({
               onToggleViewed={onToggleViewed}
               onIgnore={onIgnore}
               onViewFile={onViewFile}
+              onDiscardFile={onDiscardFile}
               onChangeFileComment={review.onChangeFileComment}
               onSaveLineComment={review.onSaveLineComment}
               onDeleteLineComment={review.onDeleteLineComment}
