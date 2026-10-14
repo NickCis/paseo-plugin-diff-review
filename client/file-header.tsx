@@ -3,7 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { Icon, Modal, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
 import { diffPalette } from "./colors";
-import { saveOnCtrlEnterProps } from "./keyboard";
+import { composerKeyProps } from "./keyboard";
 import { TooltipButton, TooltipBox } from "./tooltip-button";
 import type { DiffFile } from "../shared/rpc";
 import type { FileProgress } from "../shared/settings";
@@ -20,6 +20,8 @@ interface FileHeaderProps {
   canViewFile: boolean;
   onToggleViewed(): void;
   onIgnore(): void;
+  commentOpen: boolean;
+  onCommentOpenChange(open: boolean): void;
   onSaveFileComment(body: string): Promise<boolean>;
   onViewFile(): void;
 }
@@ -34,6 +36,8 @@ export function FileHeader({
   canViewFile,
   onToggleViewed,
   onIgnore,
+  commentOpen,
+  onCommentOpenChange,
   onSaveFileComment,
   onViewFile,
 }: FileHeaderProps) {
@@ -41,7 +45,6 @@ export function FileHeader({
   const palette = useMemo(() => diffPalette(theme), [theme]);
   const viewed = progress.status === "seen";
   const ignored = progress.status === "ignored";
-  const [commentOpen, setCommentOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [draft, setDraft] = useState(progress.fileComment ?? "");
   const [savingComment, setSavingComment] = useState(false);
@@ -181,28 +184,35 @@ export function FileHeader({
     [compact, ignored, menuOpen, palette, theme, viewed],
   );
 
+  // Reseed the draft from the saved note each time the modal opens.
+  useEffect(() => {
+    if (commentOpen) setDraft(progress.fileComment ?? "");
+  }, [commentOpen]);
+
   const openComment = useCallback(() => {
     setMenuOpen(false);
-    setDraft(progress.fileComment ?? "");
-    setCommentOpen(true);
-  }, [progress.fileComment]);
+    onCommentOpenChange(true);
+  }, [onCommentOpenChange]);
 
   const saveComment = useCallback(async () => {
     if (savingComment) return;
     setSavingComment(true);
     try {
       const ok = await onSaveFileComment(draft);
-      if (ok) setCommentOpen(false);
+      if (ok) onCommentOpenChange(false);
       else toast.error("Could not save file comment");
     } finally {
       setSavingComment(false);
     }
-  }, [draft, onSaveFileComment, savingComment, toast]);
+  }, [draft, onCommentOpenChange, onSaveFileComment, savingComment, toast]);
 
   const saveCommentPress = useCallback(() => {
     void saveComment();
   }, [saveComment]);
-  const keyProps = useMemo(() => saveOnCtrlEnterProps(saveCommentPress), [saveCommentPress]);
+  const keyProps = useMemo(
+    () => composerKeyProps({ onSave: saveCommentPress }),
+    [saveCommentPress],
+  );
 
   const clearComment = useCallback(async () => {
     setSavingComment(true);
@@ -210,14 +220,14 @@ export function FileHeader({
       const ok = await onSaveFileComment("");
       if (ok) {
         setDraft("");
-        setCommentOpen(false);
+        onCommentOpenChange(false);
       } else {
         toast.error("Could not delete file comment");
       }
     } finally {
       setSavingComment(false);
     }
-  }, [onSaveFileComment, toast]);
+  }, [onCommentOpenChange, onSaveFileComment, toast]);
 
   const toggleMenu = useCallback(() => setMenuOpen((open) => !open), []);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
@@ -353,7 +363,7 @@ export function FileHeader({
 
       <Modal
         open={commentOpen}
-        onOpenChange={setCommentOpen}
+        onOpenChange={onCommentOpenChange}
         title="File comment"
         icon={modalIcon}
       >
@@ -365,6 +375,7 @@ export function FileHeader({
             placeholder="Optional note for this file"
             placeholderTextColor={theme.colors.foregroundMuted}
             style={styles.input}
+            autoFocus
             {...keyProps}
           />
           <View style={styles.modalActions}>

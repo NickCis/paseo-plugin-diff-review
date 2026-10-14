@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { TextInput } from "@getpaseo/plugin/client/react-native";
-import { saveOnCtrlEnterProps } from "./keyboard";
+import { composerKeyProps } from "./keyboard";
 import type { LineComment } from "../shared/settings";
 
 type Theme = PluginSurfaceProps["theme"];
@@ -76,7 +76,10 @@ export function InlineCommentCard({
   const saveIfValid = useCallback(() => {
     if (canSave) save();
   }, [canSave, save]);
-  const keyProps = useMemo(() => saveOnCtrlEnterProps(saveIfValid), [saveIfValid]);
+  const keyProps = useMemo(
+    () => composerKeyProps({ onSave: saveIfValid, onCancel }),
+    [onCancel, saveIfValid],
+  );
 
   const range =
     comment.startLine === comment.endLine
@@ -94,6 +97,7 @@ export function InlineCommentCard({
             multiline
             value={draftBody}
             onChangeText={onChangeDraft}
+            autoFocus
             style={styles.input}
             placeholderTextColor={theme.colors.foregroundMuted}
             {...keyProps}

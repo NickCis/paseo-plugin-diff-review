@@ -203,6 +203,7 @@ export function DiffReviewPanel({
               compact={layout.compact}
               platform={layout.platform}
               canViewFile={canViewFile}
+              keyboardEnabled={!review.sendOpen}
               onToggleViewed={onToggleViewed}
               onIgnore={onIgnore}
               onViewFile={onViewFile}
@@ -221,6 +222,10 @@ export function DiffReviewPanel({
         workspaceId={workspaceId}
         theme={theme}
         sending={review.sending}
+        note={review.sendNote}
+        onNoteChange={review.setSendNote}
+        includeFileLists={review.includeFileLists}
+        onIncludeFileListsChange={review.setIncludeFileLists}
         onSend={onSend}
       />
     </View>

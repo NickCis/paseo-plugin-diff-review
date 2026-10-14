@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useRpc, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
@@ -7,7 +7,13 @@ import { ExpandButton } from "./expand-button";
 import { FileHeader } from "./file-header";
 import { HighlightedContent } from "./highlight-text";
 import { InlineCommentCard } from "./inline-comment";
-import { saveOnCtrlEnterProps } from "./keyboard";
+import {
+  composerKeyProps,
+  isEditableTarget,
+  reviewKeyAction,
+  webDocument,
+  type WebKeyEvent,
+} from "./keyboard";
 import { commentKey } from "./progress";
 import { diffContextRpc, type DiffFile, type DiffHunk, type DiffLine } from "../shared/rpc";
 import type { DiffTypography, FileProgress, LineComment } from "../shared/settings";
@@ -28,6 +34,7 @@ interface DiffViewProps {
   compact: boolean;
   platform: "ios" | "android" | "web";
   canViewFile: boolean;
+  keyboardEnabled: boolean;
   onToggleViewed(): void;
   onIgnore(): void;
   onViewFile(): void;
@@ -69,6 +76,57 @@ function lineInRange(
   const lo = Math.min(range.startLine, range.endLine);
   const hi = Math.max(range.startLine, range.endLine);
   return number >= lo && number <= hi;
+}
+
+type LineRange = { side: "old" | "new"; startLine: number; endLine: number };
+type RowNode = ComponentRef<typeof View>;
+
+function isSelectableLine(line: DisplayLine): boolean {
+  const side = lineSide(line);
+  return side != null && lineNumberForSide(line, side) != null;
+}
+
+/** Keeps the cursor on a commentable line, falling back to the first one. */
+function resolveCursorId(lines: readonly DisplayLine[], cursorId: string | null): string | null {
+  const selectable = lines.filter(isSelectableLine);
+  if (selectable.some((line) => line.id === cursorId)) return cursorId;
+  return selectable[0]?.id ?? null;
+}
+
+function moveCursorId(
+  lines: readonly DisplayLine[],
+  cursorId: string | null,
+  delta: number,
+): string | null {
+  const selectable = lines.filter(isSelectableLine);
+  if (selectable.length === 0) return null;
+  const index = selectable.findIndex((line) => line.id === cursorId);
+  if (index < 0) return selectable[0]!.id;
+  const next = Math.min(selectable.length - 1, Math.max(0, index + delta));
+  return selectable[next]!.id;
+}
+
+/** Inclusive range between two display lines, using the side of the first line. */
+function rangeBetween(
+  lines: readonly DisplayLine[],
+  fromId: string,
+  toId: string,
+): LineRange | null {
+  const from = lines.findIndex((line) => line.id === fromId);
+  const to = lines.findIndex((line) => line.id === toId);
+  if (from < 0 || to < 0) return null;
+  const side = lineSide(lines[from]!);
+  if (!side) return null;
+  let startLine: number | null = null;
+  let endLine: number | null = null;
+  for (let index = Math.min(from, to); index <= Math.max(from, to); index += 1) {
+    const number = lineNumberForSide(lines[index]!, side);
+    if (number == null) continue;
+    startLine = startLine == null ? number : Math.min(startLine, number);
+    endLine = endLine == null ? number : Math.max(endLine, number);
+  }
+  if (startLine == null || endLine == null) return null;
+  return { side, startLine, endLine };
 }
 
 function expandAxis(file: DiffFile): "old" | "new" {
@@ -195,6 +253,8 @@ function DiffLineRow({
   palette,
   typography,
   selected,
+  cursor,
+  rowRef,
   platform,
   onPressLine,
   onDragEnterLine,
@@ -206,10 +266,12 @@ function DiffLineRow({
   palette: ReturnType<typeof diffPalette>;
   typography: DiffTypography;
   selected: boolean;
+  cursor: boolean;
+  rowRef(node: RowNode | null): void;
   platform: "ios" | "android" | "web";
-  onPressLine(side: "old" | "new", lineNumber: number): void;
+  onPressLine(side: "old" | "new", lineNumber: number, id: string): void;
   onDragEnterLine(side: "old" | "new", lineNumber: number): void;
-  onDragStartLine(side: "old" | "new", lineNumber: number): void;
+  onDragStartLine(side: "old" | "new", lineNumber: number, id: string): void;
   onDragEndLine(): void;
 }) {
   const side = lineSide(line);
@@ -237,6 +299,8 @@ function DiffLineRow({
         alignItems: "flex-start" as const,
         alignSelf: "stretch" as const,
         backgroundColor,
+        borderLeftWidth: 2,
+        borderLeftColor: cursor ? theme.colors.accent : "transparent",
         width: "100%" as const,
         minWidth: "100%" as const,
       },
@@ -262,7 +326,9 @@ function DiffLineRow({
     }),
     [
       backgroundColor,
+      cursor,
       prefixColor,
+      theme.colors.accent,
       theme.colors.foregroundMuted,
       typography.fontFamily,
       typography.fontSize,
@@ -271,8 +337,8 @@ function DiffLineRow({
   );
 
   const press = useCallback(() => {
-    if (side && lineNumber != null) onPressLine(side, lineNumber);
-  }, [lineNumber, onPressLine, side]);
+    if (side && lineNumber != null) onPressLine(side, lineNumber, line.id);
+  }, [line.id, lineNumber, onPressLine, side]);
 
   if (platform === "web") {
     const webProps: Record<string, unknown> = disabled
@@ -281,7 +347,7 @@ function DiffLineRow({
           onMouseDown: (event: { button?: number; preventDefault?: () => void }) => {
             if (event.button != null && event.button !== 0) return;
             event.preventDefault?.();
-            if (side && lineNumber != null) onDragStartLine(side, lineNumber);
+            if (side && lineNumber != null) onDragStartLine(side, lineNumber, line.id);
           },
           onMouseEnter: (event: { buttons?: number }) => {
             if (event.buttons !== 1) return;
@@ -292,7 +358,7 @@ function DiffLineRow({
           },
         };
     return (
-      <View style={styles.line} {...webProps}>
+      <View ref={rowRef} style={styles.line} {...webProps}>
         <Text style={styles.gutter}>{line.oldLineNumber ?? ""}</Text>
         <Text style={styles.gutter}>{line.newLineNumber ?? ""}</Text>
         <Text style={styles.prefix}>{prefix}</Text>
@@ -307,7 +373,7 @@ function DiffLineRow({
   }
 
   return (
-    <Pressable disabled={disabled} onPress={press} style={styles.line}>
+    <Pressable ref={rowRef} disabled={disabled} onPress={press} style={styles.line}>
       <Text style={styles.gutter}>{line.oldLineNumber ?? ""}</Text>
       <Text style={styles.gutter}>{line.newLineNumber ?? ""}</Text>
       <Text style={styles.prefix}>{prefix}</Text>
@@ -335,6 +401,7 @@ export function DiffView({
   compact,
   platform,
   canViewFile,
+  keyboardEnabled,
   onToggleViewed,
   onIgnore,
   onViewFile,
@@ -363,12 +430,20 @@ export function DiffView({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [savingDraft, setSavingDraft] = useState(false);
+  const [fileCommentOpen, setFileCommentOpen] = useState(false);
+  // Keyboard line marker, and the anchor line while `v` visual selection is active.
+  const [cursorId, setCursorId] = useState<string | null>(null);
+  const [visualAnchorId, setVisualAnchorId] = useState<string | null>(null);
+  const rowNodes = useRef(new Map<string, RowNode>());
 
   useEffect(() => {
     setExpanded(new Map());
     setTotalLines(null);
     setDraft(null);
     setEditingKey(null);
+    setFileCommentOpen(false);
+    setCursorId(null);
+    setVisualAnchorId(null);
     dragging.current = null;
   }, [pathKey]);
 
@@ -478,9 +553,11 @@ export function DiffView({
     [cwd, loadContext, pathKey, toast],
   );
 
-  const onDragStartLine = useCallback((side: "old" | "new", line: number) => {
+  const onDragStartLine = useCallback((side: "old" | "new", line: number, id: string) => {
     dragging.current = { side, startLine: line, moved: false };
     setEditingKey(null);
+    setCursorId(id);
+    setVisualAnchorId(null);
   }, []);
 
   const onDragEnterLine = useCallback((side: "old" | "new", line: number) => {
@@ -539,8 +616,10 @@ export function DiffView({
   }, [onDragEndLine, platform]);
 
   const onPressLine = useCallback(
-    (side: "old" | "new", line: number) => {
+    (side: "old" | "new", line: number, id: string) => {
       applyTapSelection(side, line);
+      setCursorId(id);
+      setVisualAnchorId(null);
     },
     [applyTapSelection],
   );
@@ -569,9 +648,11 @@ export function DiffView({
   const saveDraftPress = useCallback(() => {
     void saveDraft();
   }, [saveDraft]);
-  const draftKeyProps = useMemo(() => saveOnCtrlEnterProps(saveDraftPress), [saveDraftPress]);
-
   const cancelDraft = useCallback(() => setDraft(null), []);
+  const draftKeyProps = useMemo(
+    () => composerKeyProps({ onSave: saveDraftPress, onCancel: cancelDraft }),
+    [cancelDraft, saveDraftPress],
+  );
 
   const startEditComment = useCallback((comment: LineComment) => {
     setEditingKey(commentKey(comment));
@@ -613,6 +694,110 @@ export function DiffView({
     [progress.lineComments],
   );
 
+  const openComposer = useCallback(
+    (range: LineRange) => {
+      const existing = progress.lineComments.find(
+        (comment) => commentKey(comment) === commentKey(range),
+      );
+      if (existing) {
+        startEditComment(existing);
+        return;
+      }
+      setEditingKey(null);
+      setDraft({ ...range, body: "" });
+    },
+    [progress.lineComments, startEditComment],
+  );
+
+  const registerRow = useCallback((id: string, node: RowNode | null) => {
+    if (node) rowNodes.current.set(id, node);
+    else rowNodes.current.delete(id);
+  }, []);
+
+  // Returns true when the key was handled (the caller then prevents default).
+  const handleKey = (key: string | undefined): boolean => {
+    const action = reviewKeyAction(key);
+    if (!action) return false;
+    if (action === "escape") {
+      if (visualAnchorId) {
+        setVisualAnchorId(null);
+        return true;
+      }
+      if (draft) {
+        cancelDraft();
+        return true;
+      }
+      return false;
+    }
+    // Composers own the keyboard while open, so shortcuts must not fire through them.
+    if (!keyboardEnabled || draft || editingKey || fileCommentOpen) return false;
+
+    const current = resolveCursorId(lines, cursorId);
+    switch (action) {
+      case "cursorDown":
+      case "cursorUp":
+        setCursorId(moveCursorId(lines, current, action === "cursorDown" ? 1 : -1));
+        return true;
+      case "toggleVisual":
+        if (visualAnchorId) {
+          setVisualAnchorId(null);
+          return true;
+        }
+        if (current) {
+          setCursorId(current);
+          setVisualAnchorId(current);
+        }
+        return true;
+      case "lineComment": {
+        if (visualAnchorId) {
+          const range = current ? rangeBetween(lines, visualAnchorId, current) : null;
+          setVisualAnchorId(null);
+          if (range) openComposer(range);
+          return true;
+        }
+        if (!current) return true;
+        setCursorId(current);
+        const range = rangeBetween(lines, current, current);
+        if (range) openComposer(range);
+        return true;
+      }
+      case "fileComment":
+        setFileCommentOpen(true);
+        return true;
+      case "markRead":
+        onToggleViewed();
+        return true;
+      case "ignore":
+        onIgnore();
+        return true;
+    }
+    return false;
+  };
+  // Keydown listener is attached once; it always calls the latest handler.
+  const handleKeyRef = useRef(handleKey);
+  handleKeyRef.current = handleKey;
+
+  useEffect(() => {
+    if (platform !== "web") return;
+    const doc = webDocument();
+    if (!doc) return;
+    const onKeyDown = (event: WebKeyEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
+      if (handleKeyRef.current(event.key)) event.preventDefault?.();
+    };
+    doc.addEventListener("keydown", onKeyDown);
+    return () => doc.removeEventListener("keydown", onKeyDown);
+  }, [platform]);
+
+  useEffect(() => {
+    if (platform !== "web" || !cursorId) return;
+    const node = rowNodes.current.get(cursorId) as unknown as
+      | { scrollIntoView?(options: { block: "nearest" }): void }
+      | undefined;
+    node?.scrollIntoView?.({ block: "nearest" });
+  }, [cursorId, platform]);
+
   const header = (
     <FileHeader
       displayPath={displayPath}
@@ -624,6 +809,8 @@ export function DiffView({
       canViewFile={canViewFile}
       onToggleViewed={onToggleViewed}
       onIgnore={onIgnore}
+      commentOpen={fileCommentOpen}
+      onCommentOpenChange={setFileCommentOpen}
       onSaveFileComment={onChangeFileComment}
       onViewFile={onViewFile}
     />
@@ -662,13 +849,15 @@ export function DiffView({
     );
   }
 
-  const selectionRange = draft
+  const selectionRange: LineRange | null = draft
     ? {
         side: draft.side,
         startLine: Math.min(draft.startLine, draft.endLine),
         endLine: Math.max(draft.startLine, draft.endLine),
       }
-    : null;
+    : visualAnchorId && cursorId
+      ? rangeBetween(lines, visualAnchorId, cursorId)
+      : null;
 
   const gapByBefore = new Map<string | null, Gap[]>();
   for (const gap of gaps) {
@@ -688,7 +877,7 @@ export function DiffView({
         ) : null}
         <Text style={styles.muted}>
           {platform === "web"
-            ? "Drag across lines, or click two lines, to comment. Click outside the range (empty draft) to start over."
+            ? "Click or drag to comment. Keys: j/k move · c comment line · v, j/k, c comment a range · C file note · r viewed · i ignore"
             : "Tap a line to comment; tap another to set a range. Tap outside the range (empty draft) to start over."}
         </Text>
 
@@ -725,6 +914,8 @@ export function DiffView({
                       palette={palette}
                       typography={typography}
                       selected={selected}
+                      cursor={line.id === cursorId}
+                      rowRef={(node) => registerRow(line.id, node)}
                       platform={platform}
                       onPressLine={onPressLine}
                       onDragEnterLine={onDragEnterLine}

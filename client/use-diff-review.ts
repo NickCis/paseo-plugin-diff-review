@@ -71,6 +71,8 @@ export function useDiffReview(workspaceId: string) {
   const [hunks, setHunks] = useState<DiffHunk[]>([]);
   const [hunkError, setHunkError] = useState<string | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
+  const [sendNote, setSendNote] = useState("");
+  const [includeFileLists, setIncludeFileLists] = useState(false);
   const [sending, setSending] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [progressError, setProgressError] = useState<string | null>(null);
@@ -377,10 +379,13 @@ export function useDiffReview(workspaceId: string) {
           files,
           values: ready.values,
           target,
+          reviewComment: sendNote,
+          includeFileLists,
           stage,
         });
         setStatusMessage(result.statusMessage);
         openAgent?.({ agentId: result.agentId });
+        setSendNote("");
         setSendOpen(false);
         await refreshSnapshot();
       } catch (error) {
@@ -392,9 +397,11 @@ export function useDiffReview(workspaceId: string) {
     [
       cwd,
       files,
+      includeFileLists,
       paseo,
       ready,
       refreshSnapshot,
+      sendNote,
       stage,
       workspace?.name,
       workspace?.title,
@@ -415,6 +422,10 @@ export function useDiffReview(workspaceId: string) {
     hunkError,
     sendOpen,
     setSendOpen,
+    sendNote,
+    setSendNote,
+    includeFileLists,
+    setIncludeFileLists,
     sending,
     statusMessage,
     progressError: progressError ?? settings.saveError,

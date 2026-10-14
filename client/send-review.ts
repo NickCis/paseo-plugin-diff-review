@@ -42,6 +42,8 @@ export async function sendDiffReview(input: {
   files: readonly DiffFile[];
   values: ReviewSettingsValues;
   target: SendTarget;
+  reviewComment: string;
+  includeFileLists: boolean;
   stage(args: { cwd: string; pathKeys: string[] }): Promise<{
     staged: string[];
     failed: Array<{ pathKey: string; error: string }>;
@@ -52,6 +54,8 @@ export async function sendDiffReview(input: {
   const prompt = expandPromptTemplate({
     template: input.values.promptTemplate,
     workspaceName: input.workspaceName,
+    reviewComment: input.reviewComment,
+    includeFileLists: input.includeFileLists,
     files: input.files.map((file) => ({
       pathKey: file.pathKey,
       progress: progressMap[file.pathKey] ?? empty,

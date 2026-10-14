@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { usePaseo, type PluginSurfaceProps } from "@getpaseo/plugin/client";
-import { Icon, Modal } from "@getpaseo/plugin/client/react-native";
+import { Icon, Modal, TextInput } from "@getpaseo/plugin/client/react-native";
+import { composerKeyProps } from "./keyboard";
 
 export interface AgentChoice {
   id: string;
@@ -17,6 +18,10 @@ interface SendSheetProps {
   workspaceId: string;
   theme: PluginSurfaceProps["theme"];
   sending: boolean;
+  note: string;
+  onNoteChange(note: string): void;
+  includeFileLists: boolean;
+  onIncludeFileListsChange(include: boolean): void;
   onSend(
     target: { kind: "existing"; agentId: string } | { kind: "create"; agentId?: string },
   ): void;
@@ -72,6 +77,10 @@ export function SendSheet({
   workspaceId,
   theme,
   sending,
+  note,
+  onNoteChange,
+  includeFileLists,
+  onIncludeFileListsChange,
   onSend,
 }: SendSheetProps) {
   const paseo = usePaseo();
@@ -125,18 +134,52 @@ export function SendSheet({
       },
       buttonText: { color: theme.colors.accentForeground, fontWeight: "600" as const },
       error: { color: theme.colors.statusDanger },
+      input: {
+        minHeight: 96,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        borderRadius: 8,
+        padding: 12,
+        color: theme.colors.foreground,
+        backgroundColor: theme.colors.surface0,
+        textAlignVertical: "top" as const,
+      },
+      checkRow: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 10,
+        paddingVertical: 4,
+      },
+      checkbox: {
+        width: 18,
+        height: 18,
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: includeFileLists ? theme.colors.accent : theme.colors.border,
+        backgroundColor: includeFileLists ? theme.colors.accent : "transparent",
+        alignItems: "center" as const,
+        justifyContent: "center" as const,
+      },
+      checkLabel: { color: theme.colors.foreground, fontSize: 13 },
     }),
-    [theme],
+    [includeFileLists, theme],
   );
 
   const selectId = useCallback((value: string) => setSelectedId(value), []);
   const confirm = useCallback(() => {
+    if (sending) return;
     if (selectedId === "new") {
       onSend({ kind: "create", agentId: agents[0]?.id });
       return;
     }
     if (selectedId) onSend({ kind: "existing", agentId: selectedId });
-  }, [agents, onSend, selectedId]);
+  }, [agents, onSend, selectedId, sending]);
+  // Ctrl/Cmd+Enter in the note sends, matching the comment boxes.
+  const noteKeyProps = useMemo(() => composerKeyProps({ onSave: confirm }), [confirm]);
+  const toggleFileLists = useCallback(
+    () => onIncludeFileListsChange(!includeFileLists),
+    [includeFileLists, onIncludeFileListsChange],
+  );
 
   return (
     <Modal
@@ -171,6 +214,28 @@ export function SendSheet({
             value="new"
             onSelect={selectId}
           />
+          <Text style={styles.title}>Note for the agent</Text>
+          <TextInput
+            multiline
+            value={note}
+            onChangeText={onNoteChange}
+            placeholder="Optional: anything about the review as a whole"
+            placeholderTextColor={theme.colors.foregroundMuted}
+            style={styles.input}
+            {...noteKeyProps}
+          />
+          <Pressable
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: includeFileLists }}
+            onPress={toggleFileLists}
+            style={styles.checkRow}
+          >
+            <View style={styles.checkbox}>
+              {includeFileLists ? <Icon name="Check" size={12} color="#ffffff" /> : null}
+            </View>
+            <Text style={styles.checkLabel}>Include viewed and ignored file lists</Text>
+          </Pressable>
+          <Text style={styles.muted}>Comments are always sent. File lists are off by default.</Text>
           <Pressable
             accessibilityRole="button"
             disabled={sending || selectedId == null}

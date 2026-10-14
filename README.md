@@ -38,9 +38,18 @@ host settings, so every client on that daemon shares the same review state.
    - Ignore — skip the file and advance
    - ⋯ — **View file** when the host can open the editor
 4. Inline comments: drag a range on web, or tap two lines on native. Expand context between
-   hunks when needed.
-5. **Send** — pick a recent agent or create one. The prompt comes from settings; eligible
-   viewed files (no comments) are `git add`ed afterward.
+   hunks when needed. Ctrl/Cmd+Enter saves a comment.
+   - Web keyboard shortcuts (not while typing in a comment box):
+     - `j` / `k` (or arrow keys) — move the line marker
+     - `c` — comment on the marked line
+     - `v`, then `j` / `k` to extend, then `c` — comment on a range (`Esc` cancels)
+     - `C` — file note
+     - `r` — toggle viewed (advances to the next file)
+     - `i` — toggle ignored (advances to the next file)
+5. **Send** — pick a recent agent or create one, optionally add a note about the review as a
+   whole, and choose whether to include viewed/ignored file lists (off by default; only
+   comments are sent otherwise). The prompt comes from settings; eligible viewed files (no
+   comments) are `git add`ed afterward.
 6. Edit the prompt under **Settings → Diff Review**.
 
 ## Distribute

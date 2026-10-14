@@ -3,6 +3,17 @@ import { z } from "zod";
 
 export const DEFAULT_PROMPT_TEMPLATE = `Review the following unstaged changes in {{workspace}}.
 
+## Comments
+{{comments}}
+
+## General comment
+{{reviewComment}}
+
+Please summarize risks, suggest follow-ups, and call out anything that should not be staged yet.`;
+
+/** Previous default. Stored templates equal to it are upgraded to the current default on read. */
+const LEGACY_DEFAULT_PROMPT_TEMPLATE = `Review the following unstaged changes in {{workspace}}.
+
 Files reviewed (seen): {{seenCount}} / {{totalCount}}
 Ignored: {{ignoredCount}}
 
@@ -46,7 +57,12 @@ export const reviewSettings = defineSettings({
   scope: "host",
   version: 1,
   schema: z.object({
-    promptTemplate: z.string().default(DEFAULT_PROMPT_TEMPLATE),
+    promptTemplate: z
+      .string()
+      .default(DEFAULT_PROMPT_TEMPLATE)
+      .transform((value) =>
+        value === LEGACY_DEFAULT_PROMPT_TEMPLATE ? DEFAULT_PROMPT_TEMPLATE : value,
+      ),
     progressByWorkspace: z.record(z.string(), WorkspaceProgressSchema).default({}),
     diffTypography: DiffTypographySchema.default({
       fontSize: DEFAULT_DIFF_FONT_SIZE,

@@ -1,22 +1,92 @@
-/** Web-oriented key event shape (RN TextInput forwards these on web). */
-export type WebKeyDownEvent = {
+/**
+ * Key event shape. On web this is a DOM/React keyboard event; on native, RN key
+ * press events only carry the key under `nativeEvent`.
+ */
+export type WebKeyEvent = {
   key?: string;
   ctrlKey?: boolean;
   metaKey?: boolean;
+  altKey?: boolean;
+  target?: unknown;
+  nativeEvent?: { key?: string };
   preventDefault?: () => void;
 };
 
-export function isSaveChord(event: WebKeyDownEvent): boolean {
-  return event.key === "Enter" && Boolean(event.ctrlKey || event.metaKey);
+export type WebDocument = {
+  addEventListener(type: "keydown", listener: (event: WebKeyEvent) => void): void;
+  removeEventListener(type: "keydown", listener: (event: WebKeyEvent) => void): void;
+};
+
+export type ReviewKeyAction =
+  | "cursorDown"
+  | "cursorUp"
+  | "toggleVisual"
+  | "lineComment"
+  | "fileComment"
+  | "markRead"
+  | "ignore"
+  | "escape";
+
+const REVIEW_KEY_ACTIONS = new Map<string, ReviewKeyAction>([
+  ["j", "cursorDown"],
+  ["ArrowDown", "cursorDown"],
+  ["k", "cursorUp"],
+  ["ArrowUp", "cursorUp"],
+  ["v", "toggleVisual"],
+  ["c", "lineComment"],
+  ["C", "fileComment"],
+  ["r", "markRead"],
+  ["i", "ignore"],
+  ["Escape", "escape"],
+]);
+
+function keyOf(event: WebKeyEvent): string | undefined {
+  return event.key ?? event.nativeEvent?.key;
 }
 
-/** Props to spread onto TextInput so Ctrl/Cmd+Enter saves. */
-export function saveOnCtrlEnterProps(onSave: () => void): Record<string, unknown> {
+export function isSaveChord(event: WebKeyEvent): boolean {
+  return keyOf(event) === "Enter" && Boolean(event.ctrlKey || event.metaKey);
+}
+
+/**
+ * Key props for a multiline composer: Ctrl/Cmd+Enter saves, Escape cancels.
+ *
+ * Must be `onKeyPress`: react-native-web's TextInput overwrites `onKeyDown` with its
+ * own handler and only forwards to `onKeyPress`, so an `onKeyDown` prop never fires.
+ */
+export function composerKeyProps(handlers: {
+  onSave(): void;
+  onCancel?(): void;
+}): Record<string, unknown> {
   return {
-    onKeyDown: (event: WebKeyDownEvent) => {
-      if (!isSaveChord(event)) return;
-      event.preventDefault?.();
-      onSave();
+    onKeyPress: (event: WebKeyEvent) => {
+      if (isSaveChord(event)) {
+        event.preventDefault?.();
+        handlers.onSave();
+        return;
+      }
+      if (handlers.onCancel && keyOf(event) === "Escape") {
+        event.preventDefault?.();
+        handlers.onCancel();
+      }
     },
   };
+}
+
+/** Maps a diff-review shortcut key to its action. Modifier combos are filtered by the caller. */
+export function reviewKeyAction(key: string | undefined): ReviewKeyAction | null {
+  if (!key) return null;
+  return REVIEW_KEY_ACTIONS.get(key) ?? null;
+}
+
+/** Keystrokes typed into inputs must not trigger review shortcuts. */
+export function isEditableTarget(target: unknown): boolean {
+  const node = target as { tagName?: string; isContentEditable?: boolean } | null;
+  if (!node) return false;
+  if (node.isContentEditable) return true;
+  return node.tagName === "INPUT" || node.tagName === "TEXTAREA" || node.tagName === "SELECT";
+}
+
+export function webDocument(): WebDocument | null {
+  return (globalThis as { document?: WebDocument }).document ?? null;
 }
