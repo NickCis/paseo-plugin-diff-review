@@ -7,9 +7,10 @@ import { ExpandButton } from "./expand-button";
 import { FileHeader } from "./file-header";
 import { HighlightedContent } from "./highlight-text";
 import { InlineCommentCard } from "./inline-comment";
+import { saveOnCtrlEnterProps } from "./keyboard";
 import { commentKey } from "./progress";
 import { diffContextRpc, type DiffFile, type DiffHunk, type DiffLine } from "../shared/rpc";
-import type { FileProgress, LineComment } from "../shared/settings";
+import type { DiffTypography, FileProgress, LineComment } from "../shared/settings";
 
 type Theme = PluginSurfaceProps["theme"];
 
@@ -22,6 +23,7 @@ interface DiffViewProps {
   hunks: readonly DiffHunk[];
   error: string | null;
   progress: FileProgress;
+  typography: DiffTypography;
   theme: Theme;
   compact: boolean;
   platform: "ios" | "android" | "web";
@@ -191,6 +193,7 @@ function DiffLineRow({
   line,
   theme,
   palette,
+  typography,
   selected,
   platform,
   onPressLine,
@@ -201,6 +204,7 @@ function DiffLineRow({
   line: DisplayLine;
   theme: Theme;
   palette: ReturnType<typeof diffPalette>;
+  typography: DiffTypography;
   selected: boolean;
   platform: "ios" | "android" | "web";
   onPressLine(side: "old" | "new", lineNumber: number): void;
@@ -229,7 +233,7 @@ function DiffLineRow({
       line: {
         flexDirection: "row" as const,
         paddingHorizontal: 4,
-        minHeight: 20,
+        minHeight: typography.lineHeight,
         alignItems: "flex-start" as const,
         alignSelf: "stretch" as const,
         backgroundColor,
@@ -239,8 +243,9 @@ function DiffLineRow({
       gutter: {
         width: 40,
         color: theme.colors.foregroundMuted,
-        fontFamily: "monospace",
-        fontSize: 11,
+        fontFamily: typography.fontFamily,
+        fontSize: typography.fontSize,
+        lineHeight: typography.lineHeight,
         textAlign: "right" as const,
         paddingRight: 6,
         flexShrink: 0,
@@ -248,13 +253,21 @@ function DiffLineRow({
       prefix: {
         width: 14,
         color: prefixColor,
-        fontFamily: "monospace",
-        fontSize: 12,
+        fontFamily: typography.fontFamily,
+        fontSize: typography.fontSize,
+        lineHeight: typography.lineHeight,
         fontWeight: "700" as const,
         flexShrink: 0,
       },
     }),
-    [backgroundColor, prefixColor, theme.colors.foregroundMuted],
+    [
+      backgroundColor,
+      prefixColor,
+      theme.colors.foregroundMuted,
+      typography.fontFamily,
+      typography.fontSize,
+      typography.lineHeight,
+    ],
   );
 
   const press = useCallback(() => {
@@ -287,6 +300,7 @@ function DiffLineRow({
           content={line.content}
           theme={theme}
           baseColor={theme.colors.foreground}
+          typography={typography}
         />
       </View>
     );
@@ -301,6 +315,7 @@ function DiffLineRow({
         content={line.content}
         theme={theme}
         baseColor={theme.colors.foreground}
+        typography={typography}
       />
     </Pressable>
   );
@@ -315,6 +330,7 @@ export function DiffView({
   hunks,
   error,
   progress,
+  typography,
   theme,
   compact,
   platform,
@@ -363,7 +379,15 @@ export function DiffView({
 
   const styles = useMemo(
     () => ({
-      root: { gap: 12, alignSelf: "stretch" as const, width: "100%" as const },
+      root: {
+        flex: 1,
+        minHeight: 0,
+        gap: 0,
+        alignSelf: "stretch" as const,
+        width: "100%" as const,
+      },
+      scroll: { flex: 1, minHeight: 0 },
+      scrollContent: { gap: 12, paddingTop: 12, paddingBottom: 24 },
       muted: { color: theme.colors.foregroundMuted, fontSize: 13 },
       error: { color: theme.colors.statusDanger, fontSize: 13 },
       input: {
@@ -408,6 +432,7 @@ export function DiffView({
         flexDirection: "row" as const,
         alignItems: "center" as const,
         gap: 12,
+        flexWrap: "wrap" as const,
       },
       cancelButton: {
         paddingHorizontal: 12,
@@ -415,6 +440,7 @@ export function DiffView({
         justifyContent: "center" as const,
       },
       action: { color: theme.colors.accent, fontSize: 12, fontWeight: "600" as const },
+      hint: { color: theme.colors.foregroundMuted, fontSize: 11, marginLeft: "auto" as const },
     }),
     [theme],
   );
@@ -540,6 +566,11 @@ export function DiffView({
     }
   }, [draft, onSaveLineComment, savingDraft, toast]);
 
+  const saveDraftPress = useCallback(() => {
+    void saveDraft();
+  }, [saveDraft]);
+  const draftKeyProps = useMemo(() => saveOnCtrlEnterProps(saveDraftPress), [saveDraftPress]);
+
   const cancelDraft = useCallback(() => setDraft(null), []);
 
   const startEditComment = useCallback((comment: LineComment) => {
@@ -582,11 +613,53 @@ export function DiffView({
     [progress.lineComments],
   );
 
-  if (status === "loading") return <Text style={styles.muted}>Loading diff…</Text>;
-  if (status === "binary") return <Text style={styles.muted}>Binary file</Text>;
-  if (status === "too_large") return <Text style={styles.muted}>Diff too large to display</Text>;
+  const header = (
+    <FileHeader
+      displayPath={displayPath}
+      file={file}
+      progress={progress}
+      theme={theme}
+      compact={compact}
+      platform={platform}
+      canViewFile={canViewFile}
+      onToggleViewed={onToggleViewed}
+      onIgnore={onIgnore}
+      onSaveFileComment={onChangeFileComment}
+      onViewFile={onViewFile}
+    />
+  );
+
+  if (status === "loading") {
+    return (
+      <View style={styles.root}>
+        {header}
+        <Text style={[styles.muted, { marginTop: 12 }]}>Loading diff…</Text>
+      </View>
+    );
+  }
+  if (status === "binary") {
+    return (
+      <View style={styles.root}>
+        {header}
+        <Text style={[styles.muted, { marginTop: 12 }]}>Binary file</Text>
+      </View>
+    );
+  }
+  if (status === "too_large") {
+    return (
+      <View style={styles.root}>
+        {header}
+        <Text style={[styles.muted, { marginTop: 12 }]}>Diff too large to display</Text>
+      </View>
+    );
+  }
   if (status === "missing") {
-    return <Text style={styles.muted}>{error ?? "File unavailable"}</Text>;
+    return (
+      <View style={styles.root}>
+        {header}
+        <Text style={[styles.muted, { marginTop: 12 }]}>{error ?? "File unavailable"}</Text>
+      </View>
+    );
   }
 
   const selectionRange = draft
@@ -606,141 +679,134 @@ export function DiffView({
 
   return (
     <View style={styles.root}>
-      <FileHeader
-        displayPath={displayPath}
-        file={file}
-        progress={progress}
-        theme={theme}
-        compact={compact}
-        platform={platform}
-        canViewFile={canViewFile}
-        onToggleViewed={onToggleViewed}
-        onIgnore={onIgnore}
-        onSaveFileComment={onChangeFileComment}
-        onViewFile={onViewFile}
-      />
-      {progress.fileComment ? (
-        <Text style={styles.muted} numberOfLines={2}>
-          File note: {progress.fileComment}
+      {header}
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        {progress.fileComment ? (
+          <Text style={styles.muted} numberOfLines={2}>
+            File note: {progress.fileComment}
+          </Text>
+        ) : null}
+        <Text style={styles.muted}>
+          {platform === "web"
+            ? "Drag across lines, or click two lines, to comment. Click outside the range (empty draft) to start over."
+            : "Tap a line to comment; tap another to set a range. Tap outside the range (empty draft) to start over."}
         </Text>
-      ) : null}
-      <Text style={styles.muted}>
-        {platform === "web"
-          ? "Drag across lines, or click two lines, to comment. Click outside the range (empty draft) to start over."
-          : "Tap a line to comment; tap another to set a range. Tap outside the range (empty draft) to start over."}
-      </Text>
 
-      <View style={styles.hunk}>
-        <ScrollView
-          horizontal
-          style={styles.hunkScroll}
-          contentContainerStyle={styles.hunkScrollContent}
-        >
-          <View style={styles.hunkInner}>
-            {(gapByBefore.get(null) ?? []).map((gap) => (
-              <ExpandButton
-                key={gap.id}
-                gapId={gap.id}
-                startLine={gap.startLine}
-                endLine={gap.endLine}
-                totalLines={totalLines}
-                expanding={expandingKey === `${gap.startLine}:${gap.endLine}`}
-                theme={theme}
-                onExpand={(gapId, start, end) => void onExpand(gapId, start, end, gap.side)}
-              />
-            ))}
-            {lines.map((line) => {
-              const selected = selectionRange ? lineInRange(line, selectionRange) : false;
-              const comments = commentsAfterLine(line);
-              const draftHere =
-                draft &&
-                lineNumberForSide(line, draft.side) === Math.max(draft.startLine, draft.endLine);
-              return (
-                <View key={line.id}>
-                  <DiffLineRow
-                    line={line}
-                    theme={theme}
-                    palette={palette}
-                    selected={selected}
-                    platform={platform}
-                    onPressLine={onPressLine}
-                    onDragEnterLine={onDragEnterLine}
-                    onDragStartLine={onDragStartLine}
-                    onDragEndLine={onDragEndLine}
-                  />
-                  {comments.map((comment) => {
-                    const key = commentKey(comment);
-                    return (
-                      <InlineCommentCard
-                        key={key}
-                        comment={comment}
-                        theme={theme}
-                        editing={editingKey === key}
-                        draftBody={editingKey === key ? editBody : comment.body}
-                        onStartEdit={startEditComment}
-                        onChangeDraft={setEditBody}
-                        onSave={(next) => void saveEditComment(next)}
-                        onCancel={cancelEditComment}
-                        onDelete={(next) => void deleteComment(next)}
-                      />
-                    );
-                  })}
-                  {draftHere ? (
-                    <View style={styles.draftBox}>
-                      <Text style={styles.muted}>
-                        Comment on {draft.side} L{Math.min(draft.startLine, draft.endLine)}
-                        {draft.startLine !== draft.endLine
-                          ? `–${Math.max(draft.startLine, draft.endLine)}`
-                          : ""}
-                      </Text>
-                      <TextInput
-                        multiline
-                        value={draft.body}
-                        onChangeText={onDraftBody}
-                        placeholder="Line comment"
-                        placeholderTextColor={theme.colors.foregroundMuted}
-                        style={styles.input}
-                        autoFocus
-                      />
-                      <View style={styles.actions}>
-                        <Pressable
-                          accessibilityRole="button"
-                          onPress={() => void saveDraft()}
-                          style={styles.button}
-                          disabled={savingDraft}
-                        >
-                          <Text style={styles.buttonText}>
-                            {savingDraft ? "Saving…" : "Save comment"}
-                          </Text>
-                        </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          onPress={cancelDraft}
-                          style={styles.cancelButton}
-                        >
-                          <Text style={styles.action}>Cancel</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  ) : null}
-                  {(gapByBefore.get(line.id) ?? []).map((gap) => (
-                    <ExpandButton
-                      key={gap.id}
-                      gapId={gap.id}
-                      startLine={gap.startLine}
-                      endLine={gap.endLine}
-                      totalLines={totalLines}
-                      expanding={expandingKey === `${gap.startLine}:${gap.endLine}`}
+        <View style={styles.hunk}>
+          <ScrollView
+            horizontal
+            style={styles.hunkScroll}
+            contentContainerStyle={styles.hunkScrollContent}
+          >
+            <View style={styles.hunkInner}>
+              {(gapByBefore.get(null) ?? []).map((gap) => (
+                <ExpandButton
+                  key={gap.id}
+                  gapId={gap.id}
+                  startLine={gap.startLine}
+                  endLine={gap.endLine}
+                  totalLines={totalLines}
+                  expanding={expandingKey === `${gap.startLine}:${gap.endLine}`}
+                  theme={theme}
+                  onExpand={(gapId, start, end) => void onExpand(gapId, start, end, gap.side)}
+                />
+              ))}
+              {lines.map((line) => {
+                const selected = selectionRange ? lineInRange(line, selectionRange) : false;
+                const comments = commentsAfterLine(line);
+                const draftHere =
+                  draft &&
+                  lineNumberForSide(line, draft.side) === Math.max(draft.startLine, draft.endLine);
+                return (
+                  <View key={line.id}>
+                    <DiffLineRow
+                      line={line}
                       theme={theme}
-                      onExpand={(gapId, start, end) => void onExpand(gapId, start, end, gap.side)}
+                      palette={palette}
+                      typography={typography}
+                      selected={selected}
+                      platform={platform}
+                      onPressLine={onPressLine}
+                      onDragEnterLine={onDragEnterLine}
+                      onDragStartLine={onDragStartLine}
+                      onDragEndLine={onDragEndLine}
                     />
-                  ))}
-                </View>
-              );
-            })}
-          </View>
-        </ScrollView>
-      </View>
+                    {comments.map((comment) => {
+                      const key = commentKey(comment);
+                      return (
+                        <InlineCommentCard
+                          key={key}
+                          comment={comment}
+                          theme={theme}
+                          editing={editingKey === key}
+                          draftBody={editingKey === key ? editBody : comment.body}
+                          onStartEdit={startEditComment}
+                          onChangeDraft={setEditBody}
+                          onSave={(next) => void saveEditComment(next)}
+                          onCancel={cancelEditComment}
+                          onDelete={(next) => void deleteComment(next)}
+                        />
+                      );
+                    })}
+                    {draftHere ? (
+                      <View style={styles.draftBox}>
+                        <Text style={styles.muted}>
+                          Comment on {draft.side} L{Math.min(draft.startLine, draft.endLine)}
+                          {draft.startLine !== draft.endLine
+                            ? `–${Math.max(draft.startLine, draft.endLine)}`
+                            : ""}
+                        </Text>
+                        <TextInput
+                          multiline
+                          value={draft.body}
+                          onChangeText={onDraftBody}
+                          placeholder="Line comment"
+                          placeholderTextColor={theme.colors.foregroundMuted}
+                          style={styles.input}
+                          autoFocus
+                          {...draftKeyProps}
+                        />
+                        <View style={styles.actions}>
+                          <Pressable
+                            accessibilityRole="button"
+                            onPress={saveDraftPress}
+                            style={styles.button}
+                            disabled={savingDraft}
+                          >
+                            <Text style={styles.buttonText}>
+                              {savingDraft ? "Saving…" : "Save comment"}
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            accessibilityRole="button"
+                            onPress={cancelDraft}
+                            style={styles.cancelButton}
+                          >
+                            <Text style={styles.action}>Cancel</Text>
+                          </Pressable>
+                          <Text style={styles.hint}>Ctrl+Enter to save</Text>
+                        </View>
+                      </View>
+                    ) : null}
+                    {(gapByBefore.get(line.id) ?? []).map((gap) => (
+                      <ExpandButton
+                        key={gap.id}
+                        gapId={gap.id}
+                        startLine={gap.startLine}
+                        endLine={gap.endLine}
+                        totalLines={totalLines}
+                        expanding={expandingKey === `${gap.startLine}:${gap.endLine}`}
+                        theme={theme}
+                        onExpand={(gapId, start, end) => void onExpand(gapId, start, end, gap.side)}
+                      />
+                    ))}
+                  </View>
+                );
+              })}
+            </View>
+          </ScrollView>
+        </View>
+      </ScrollView>
     </View>
   );
 }

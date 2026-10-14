@@ -188,32 +188,31 @@ export function DiffReviewPanel({
           </ScrollView>
         </View>
         <View style={styles.detailPane}>
-          <ScrollView style={styles.paneScroll}>
-            {review.selectedPathKey && review.selectedFile && review.cwd ? (
-              <DiffView
-                pathKey={review.selectedPathKey}
-                displayPath={displayPathForKey(review.selectedPathKey)}
-                file={review.selectedFile}
-                cwd={review.cwd}
-                status={review.hunkStatus}
-                hunks={review.hunks}
-                error={review.hunkError}
-                progress={review.fileProgress}
-                theme={theme}
-                compact={layout.compact}
-                platform={layout.platform}
-                canViewFile={canViewFile}
-                onToggleViewed={onToggleViewed}
-                onIgnore={onIgnore}
-                onViewFile={onViewFile}
-                onChangeFileComment={review.onChangeFileComment}
-                onSaveLineComment={review.onSaveLineComment}
-                onDeleteLineComment={review.onDeleteLineComment}
-              />
-            ) : (
-              <Text style={styles.muted}>Select a file to review.</Text>
-            )}
-          </ScrollView>
+          {review.selectedPathKey && review.selectedFile && review.cwd ? (
+            <DiffView
+              pathKey={review.selectedPathKey}
+              displayPath={displayPathForKey(review.selectedPathKey)}
+              file={review.selectedFile}
+              cwd={review.cwd}
+              status={review.hunkStatus}
+              hunks={review.hunks}
+              error={review.hunkError}
+              progress={review.fileProgress}
+              typography={review.typography}
+              theme={theme}
+              compact={layout.compact}
+              platform={layout.platform}
+              canViewFile={canViewFile}
+              onToggleViewed={onToggleViewed}
+              onIgnore={onIgnore}
+              onViewFile={onViewFile}
+              onChangeFileComment={review.onChangeFileComment}
+              onSaveLineComment={review.onSaveLineComment}
+              onDeleteLineComment={review.onDeleteLineComment}
+            />
+          ) : (
+            <Text style={styles.muted}>Select a file to review.</Text>
+          )}
         </View>
       </View>
       <SendSheet

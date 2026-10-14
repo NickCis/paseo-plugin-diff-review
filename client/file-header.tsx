@@ -3,6 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { Icon, Modal, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
 import { diffPalette } from "./colors";
+import { saveOnCtrlEnterProps } from "./keyboard";
 import { TooltipButton, TooltipBox } from "./tooltip-button";
 import type { DiffFile } from "../shared/rpc";
 import type { FileProgress } from "../shared/settings";
@@ -52,11 +53,15 @@ export function FileHeader({
         alignItems: "center" as const,
         gap: compact ? 8 : 10,
         flexWrap: "wrap" as const,
-        paddingBottom: 4,
+        paddingBottom: 8,
+        paddingTop: 2,
+        backgroundColor: theme.colors.surface0,
         borderBottomWidth: 1,
         borderBottomColor: theme.colors.border,
         zIndex: menuOpen ? 20 : 1,
+        flexShrink: 0,
       },
+      modalHint: { color: theme.colors.foregroundMuted, fontSize: 11, marginLeft: "auto" as const },
       name: {
         flexGrow: 1,
         flexShrink: 1,
@@ -183,6 +188,7 @@ export function FileHeader({
   }, [progress.fileComment]);
 
   const saveComment = useCallback(async () => {
+    if (savingComment) return;
     setSavingComment(true);
     try {
       const ok = await onSaveFileComment(draft);
@@ -191,7 +197,12 @@ export function FileHeader({
     } finally {
       setSavingComment(false);
     }
-  }, [draft, onSaveFileComment, toast]);
+  }, [draft, onSaveFileComment, savingComment, toast]);
+
+  const saveCommentPress = useCallback(() => {
+    void saveComment();
+  }, [saveComment]);
+  const keyProps = useMemo(() => saveOnCtrlEnterProps(saveCommentPress), [saveCommentPress]);
 
   const clearComment = useCallback(async () => {
     setSavingComment(true);
@@ -354,12 +365,13 @@ export function FileHeader({
             placeholder="Optional note for this file"
             placeholderTextColor={theme.colors.foregroundMuted}
             style={styles.input}
+            {...keyProps}
           />
           <View style={styles.modalActions}>
             <Pressable
               accessibilityRole="button"
               disabled={savingComment}
-              onPress={() => void saveComment()}
+              onPress={saveCommentPress}
               style={styles.actionPressable}
             >
               <Text style={styles.action}>{savingComment ? "Saving…" : "Save"}</Text>
@@ -374,6 +386,7 @@ export function FileHeader({
                 <Text style={styles.danger}>Delete</Text>
               </Pressable>
             ) : null}
+            <Text style={styles.modalHint}>Ctrl+Enter to save</Text>
           </View>
         </Modal.Content>
       </Modal>

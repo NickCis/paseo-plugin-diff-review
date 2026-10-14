@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Text } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { highlightLine, roleColor, type HighlightSpan } from "./highlight";
+import type { DiffTypography } from "../shared/settings";
 
 type Theme = PluginSurfaceProps["theme"];
 
@@ -23,21 +24,24 @@ export function HighlightedContent({
   content,
   theme,
   baseColor,
+  typography,
 }: {
   content: string;
   theme: Theme;
   baseColor: string;
+  typography: DiffTypography;
 }) {
   const spans = useMemo(() => highlightLine(content), [content]);
   const root = useMemo(
     () => ({
       flexGrow: 1,
       flexShrink: 0,
-      fontFamily: "monospace",
-      fontSize: 12,
+      fontFamily: typography.fontFamily,
+      fontSize: typography.fontSize,
+      lineHeight: typography.lineHeight,
       color: baseColor,
     }),
-    [baseColor],
+    [baseColor, typography.fontFamily, typography.fontSize, typography.lineHeight],
   );
   return (
     <Text style={root}>

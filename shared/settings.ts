@@ -14,6 +14,10 @@ Ignored: {{ignoredCount}}
 
 Please summarize risks, suggest follow-ups, and call out anything that should not be staged yet.`;
 
+export const DEFAULT_DIFF_FONT_SIZE = 12;
+export const DEFAULT_DIFF_LINE_HEIGHT = 18;
+export const DEFAULT_DIFF_FONT_FAMILY = "monospace";
+
 const LineCommentSchema = z.object({
   startLine: z.number().int().positive(),
   endLine: z.number().int().positive(),
@@ -31,6 +35,12 @@ const WorkspaceProgressSchema = z.object({
   files: z.record(z.string(), FileProgressSchema).default({}),
 });
 
+const DiffTypographySchema = z.object({
+  fontSize: z.number().positive().default(DEFAULT_DIFF_FONT_SIZE),
+  lineHeight: z.number().positive().default(DEFAULT_DIFF_LINE_HEIGHT),
+  fontFamily: z.string().min(1).default(DEFAULT_DIFF_FONT_FAMILY),
+});
+
 export const reviewSettings = defineSettings({
   id: "diff-review",
   scope: "host",
@@ -38,9 +48,15 @@ export const reviewSettings = defineSettings({
   schema: z.object({
     promptTemplate: z.string().default(DEFAULT_PROMPT_TEMPLATE),
     progressByWorkspace: z.record(z.string(), WorkspaceProgressSchema).default({}),
+    diffTypography: DiffTypographySchema.default({
+      fontSize: DEFAULT_DIFF_FONT_SIZE,
+      lineHeight: DEFAULT_DIFF_LINE_HEIGHT,
+      fontFamily: DEFAULT_DIFF_FONT_FAMILY,
+    }),
   }),
 });
 
 export type ReviewSettingsValues = z.infer<typeof reviewSettings.schema>;
 export type FileProgress = z.infer<typeof FileProgressSchema>;
 export type LineComment = z.infer<typeof LineCommentSchema>;
+export type DiffTypography = z.infer<typeof DiffTypographySchema>;

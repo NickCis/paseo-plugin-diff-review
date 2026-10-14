@@ -15,6 +15,7 @@ import {
   withUpdatedFile,
   workspaceFiles,
 } from "./progress";
+import { treeOrderedFiles } from "./file-tree";
 import { sendDiffReview, type SendTarget } from "./send-review";
 import {
   diffHunksRpc,
@@ -23,7 +24,15 @@ import {
   type DiffFile,
   type DiffHunk,
 } from "../shared/rpc";
-import { reviewSettings, type LineComment, type ReviewSettingsValues } from "../shared/settings";
+import {
+  DEFAULT_DIFF_FONT_FAMILY,
+  DEFAULT_DIFF_FONT_SIZE,
+  DEFAULT_DIFF_LINE_HEIGHT,
+  reviewSettings,
+  type DiffTypography,
+  type LineComment,
+  type ReviewSettingsValues,
+} from "../shared/settings";
 
 type ReadySettings = Extract<SettingsState<typeof reviewSettings.schema>, { status: "ready" }>;
 
@@ -31,8 +40,14 @@ const EMPTY_PROGRESS = { status: "unread" as const, lineComments: [] };
 const EMPTY_SETTINGS: ReviewSettingsValues = {
   promptTemplate: "",
   progressByWorkspace: {},
+  diffTypography: {
+    fontSize: DEFAULT_DIFF_FONT_SIZE,
+    lineHeight: DEFAULT_DIFF_LINE_HEIGHT,
+    fontFamily: DEFAULT_DIFF_FONT_FAMILY,
+  },
 };
 const EMPTY_FILES: Record<string, typeof EMPTY_PROGRESS> = {};
+const DEFAULT_TYPOGRAPHY: DiffTypography = EMPTY_SETTINGS.diffTypography;
 
 export function useDiffReview(workspaceId: string) {
   const paseo = usePaseo();
@@ -200,25 +215,29 @@ export function useDiffReview(workspaceId: string) {
     setSelectedPathKey(pathKey);
   }, []);
 
+  const orderedFiles = useMemo(() => treeOrderedFiles(files), [files]);
+
   const selectNextFile = useCallback(
     (fromPathKey: string) => {
-      const index = files.findIndex((file) => file.pathKey === fromPathKey);
+      const index = orderedFiles.findIndex((file) => file.pathKey === fromPathKey);
       if (index < 0) return;
       const isOpen = (pathKey: string) => {
         if (pathKey === fromPathKey) return false;
         const status = progress[pathKey]?.status ?? "unread";
         return status !== "ignored" && status !== "seen";
       };
-      const next = files.slice(index + 1).find((file) => isOpen(file.pathKey));
+      const next = orderedFiles.slice(index + 1).find((file) => isOpen(file.pathKey));
       if (next) {
         setSelectedPathKey(next.pathKey);
         return;
       }
-      const wrap = files.slice(0, index).find((file) => isOpen(file.pathKey));
+      const wrap = orderedFiles.slice(0, index).find((file) => isOpen(file.pathKey));
       if (wrap) setSelectedPathKey(wrap.pathKey);
     },
-    [files, progress],
+    [orderedFiles, progress],
   );
+
+  const typography = ready?.values.diffTypography ?? DEFAULT_TYPOGRAPHY;
 
   const toggleViewed = useCallback(
     async (pathKey: string) => {
@@ -404,6 +423,7 @@ export function useDiffReview(workspaceId: string) {
     progress,
     counts,
     fileProgress,
+    typography,
     toggleViewed,
     ignoreFile,
     selectFile,

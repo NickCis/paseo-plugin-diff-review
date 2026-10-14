@@ -139,3 +139,16 @@ export function flattenTree(
   visit(nodes);
   return rows;
 }
+
+/** Files in the same depth-first order as the tree list (all folders expanded). */
+export function treeOrderedFiles(files: readonly DiffFile[]): DiffFile[] {
+  const ordered: DiffFile[] = [];
+  const visit = (nodes: readonly TreeNode[]) => {
+    for (const node of nodes) {
+      if (node.kind === "dir") visit(node.children);
+      else ordered.push(node.file);
+    }
+  };
+  visit(buildFileTree(files));
+  return ordered;
+}

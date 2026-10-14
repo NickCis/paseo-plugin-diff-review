@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { TextInput } from "@getpaseo/plugin/client/react-native";
+import { saveOnCtrlEnterProps } from "./keyboard";
 import type { LineComment } from "../shared/settings";
 
 type Theme = PluginSurfaceProps["theme"];
@@ -54,6 +55,7 @@ export function InlineCommentCard({
         flexDirection: "row" as const,
         alignItems: "center" as const,
         gap: 12,
+        flexWrap: "wrap" as const,
       },
       actionPressable: {
         paddingHorizontal: 4,
@@ -62,6 +64,7 @@ export function InlineCommentCard({
       },
       action: { color: theme.colors.accent, fontSize: 12, fontWeight: "600" as const },
       danger: { color: theme.colors.statusDanger, fontSize: 12, fontWeight: "600" as const },
+      hint: { color: theme.colors.foregroundMuted, fontSize: 11, marginLeft: "auto" as const },
     }),
     [theme],
   );
@@ -70,6 +73,10 @@ export function InlineCommentCard({
   const save = useCallback(() => onSave(comment), [comment, onSave]);
   const remove = useCallback(() => onDelete(comment), [comment, onDelete]);
   const canSave = draftBody.trim().length > 0;
+  const saveIfValid = useCallback(() => {
+    if (canSave) save();
+  }, [canSave, save]);
+  const keyProps = useMemo(() => saveOnCtrlEnterProps(saveIfValid), [saveIfValid]);
 
   const range =
     comment.startLine === comment.endLine
@@ -89,6 +96,7 @@ export function InlineCommentCard({
             onChangeText={onChangeDraft}
             style={styles.input}
             placeholderTextColor={theme.colors.foregroundMuted}
+            {...keyProps}
           />
           <View style={styles.actions}>
             <Pressable
@@ -109,6 +117,7 @@ export function InlineCommentCard({
             <Pressable accessibilityRole="button" onPress={remove} style={styles.actionPressable}>
               <Text style={styles.danger}>Delete</Text>
             </Pressable>
+            <Text style={styles.hint}>Ctrl+Enter to save</Text>
           </View>
         </>
       ) : (
