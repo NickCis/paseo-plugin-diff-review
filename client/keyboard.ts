@@ -20,6 +20,8 @@ export type WebDocument = {
 export type ReviewKeyAction =
   | "cursorDown"
   | "cursorUp"
+  | "cursorTop"
+  | "cursorBottom"
   | "toggleVisual"
   | "lineComment"
   | "fileComment"
@@ -76,7 +78,25 @@ export function composerKeyProps(handlers: {
 /** Maps a diff-review shortcut key to its action. Modifier combos are filtered by the caller. */
 export function reviewKeyAction(key: string | undefined): ReviewKeyAction | null {
   if (!key) return null;
+  if (key === "G") return "cursorBottom";
   return REVIEW_KEY_ACTIONS.get(key) ?? null;
+}
+
+/**
+ * Resolves one key, including the `gg` chord. A lone `g` arms the chord; the next
+ * key either completes it or runs as itself.
+ */
+export function nextReviewKey(
+  pending: "g" | null,
+  key: string | undefined,
+): { action: ReviewKeyAction | null; pending: "g" | null } {
+  if (!key) return { action: null, pending };
+  if (pending === "g") {
+    if (key === "g") return { action: "cursorTop", pending: null };
+    return { action: reviewKeyAction(key), pending: null };
+  }
+  if (key === "g") return { action: null, pending: "g" };
+  return { action: reviewKeyAction(key), pending: null };
 }
 
 /** Keystrokes typed into inputs must not trigger review shortcuts. */

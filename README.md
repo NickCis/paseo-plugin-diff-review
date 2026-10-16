@@ -42,6 +42,7 @@ host settings, so every client on that daemon shares the same review state.
    hunks when needed. Ctrl/Cmd+Enter saves a comment.
    - Web keyboard shortcuts (not while typing in a comment box):
      - `j` / `k` (or arrow keys) — move the line marker
+     - `gg` / `G` — jump to the first or last shown line
      - `c` — comment on the marked line
      - `v`, then `j` / `k` to extend, then `c` — comment on a range (`Esc` cancels)
      - `C` — file note

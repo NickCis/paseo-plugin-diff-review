@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { TextInput } from "@getpaseo/plugin/client/react-native";
@@ -11,9 +11,7 @@ export function InlineCommentCard({
   comment,
   theme,
   editing,
-  draftBody,
   onStartEdit,
-  onChangeDraft,
   onSave,
   onCancel,
   onDelete,
@@ -21,10 +19,8 @@ export function InlineCommentCard({
   comment: LineComment;
   theme: Theme;
   editing: boolean;
-  draftBody: string;
   onStartEdit(comment: LineComment): void;
-  onChangeDraft(body: string): void;
-  onSave(comment: LineComment): void;
+  onSave(comment: LineComment, body: string): void;
   onCancel(): void;
   onDelete(comment: LineComment): void;
 }) {
@@ -70,15 +66,10 @@ export function InlineCommentCard({
   );
 
   const startEdit = useCallback(() => onStartEdit(comment), [comment, onStartEdit]);
-  const save = useCallback(() => onSave(comment), [comment, onSave]);
   const remove = useCallback(() => onDelete(comment), [comment, onDelete]);
-  const canSave = draftBody.trim().length > 0;
-  const saveIfValid = useCallback(() => {
-    if (canSave) save();
-  }, [canSave, save]);
-  const keyProps = useMemo(
-    () => composerKeyProps({ onSave: saveIfValid, onCancel }),
-    [onCancel, saveIfValid],
+  const save = useCallback(
+    (body: string) => onSave(comment, body),
+    [comment, onSave],
   );
 
   const range =
@@ -92,38 +83,13 @@ export function InlineCommentCard({
         {comment.side} {range}
       </Text>
       {editing ? (
-        <>
-          <TextInput
-            multiline
-            value={draftBody}
-            onChangeText={onChangeDraft}
-            autoFocus
-            style={styles.input}
-            placeholderTextColor={theme.colors.foregroundMuted}
-            {...keyProps}
-          />
-          <View style={styles.actions}>
-            <Pressable
-              accessibilityRole="button"
-              disabled={!canSave}
-              onPress={save}
-              style={styles.actionPressable}
-            >
-              <Text style={[styles.action, !canSave ? { opacity: 0.4 } : null]}>Save</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={onCancel}
-              style={styles.actionPressable}
-            >
-              <Text style={styles.action}>Cancel</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" onPress={remove} style={styles.actionPressable}>
-              <Text style={styles.danger}>Delete</Text>
-            </Pressable>
-            <Text style={styles.hint}>Ctrl+Enter to save</Text>
-          </View>
-        </>
+        <CommentEditor
+          initialBody={comment.body}
+          theme={theme}
+          onSave={save}
+          onCancel={onCancel}
+          onDelete={remove}
+        />
       ) : (
         <>
           <Text style={styles.body}>{comment.body}</Text>
@@ -142,5 +108,89 @@ export function InlineCommentCard({
         </>
       )}
     </View>
+  );
+}
+
+/** Owns the text being typed so each keystroke does not re-render the diff. */
+function CommentEditor({
+  initialBody,
+  theme,
+  onSave,
+  onCancel,
+  onDelete,
+}: {
+  initialBody: string;
+  theme: Theme;
+  onSave(body: string): void;
+  onCancel(): void;
+  onDelete(): void;
+}) {
+  const [body, setBody] = useState(initialBody);
+  const canSave = body.trim().length > 0;
+  const save = useCallback(() => {
+    if (body.trim()) onSave(body);
+  }, [body, onSave]);
+  const keyProps = useMemo(
+    () => composerKeyProps({ onSave: save, onCancel }),
+    [onCancel, save],
+  );
+  const styles = useMemo(
+    () => ({
+      input: {
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        borderRadius: 6,
+        padding: 8,
+        color: theme.colors.foreground,
+        minHeight: 56,
+        textAlignVertical: "top" as const,
+      },
+      actions: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 12,
+        flexWrap: "wrap" as const,
+      },
+      actionPressable: {
+        paddingHorizontal: 4,
+        paddingVertical: 8,
+        justifyContent: "center" as const,
+      },
+      action: { color: theme.colors.accent, fontSize: 12, fontWeight: "600" as const },
+      danger: { color: theme.colors.statusDanger, fontSize: 12, fontWeight: "600" as const },
+      hint: { color: theme.colors.foregroundMuted, fontSize: 11, marginLeft: "auto" as const },
+    }),
+    [theme],
+  );
+
+  return (
+    <>
+      <TextInput
+        multiline
+        value={body}
+        onChangeText={setBody}
+        autoFocus
+        style={styles.input}
+        placeholderTextColor={theme.colors.foregroundMuted}
+        {...keyProps}
+      />
+      <View style={styles.actions}>
+        <Pressable
+          accessibilityRole="button"
+          disabled={!canSave}
+          onPress={save}
+          style={styles.actionPressable}
+        >
+          <Text style={[styles.action, !canSave ? { opacity: 0.4 } : null]}>Save</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={onCancel} style={styles.actionPressable}>
+          <Text style={styles.action}>Cancel</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={onDelete} style={styles.actionPressable}>
+          <Text style={styles.danger}>Delete</Text>
+        </Pressable>
+        <Text style={styles.hint}>Ctrl+Enter to save</Text>
+      </View>
+    </>
   );
 }

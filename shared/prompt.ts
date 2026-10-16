@@ -3,6 +3,11 @@ import type { FileProgress, LineComment, ReviewSettingsValues } from "./settings
 
 type FileEntry = { pathKey: string; progress: FileProgress };
 
+/** Drops a `## General comment` heading whose body was left blank. */
+function omitEmptyGeneralComment(prompt: string): string {
+  return prompt.replace(/(^|\n)## General comment[ \t]*(?:\r?\n)+/g, "$1");
+}
+
 function bulletList(files: readonly FileEntry[]): string {
   return files.map((file) => `- ${displayPathForKey(file.pathKey)}`).join("\n");
 }
@@ -54,10 +59,11 @@ export function expandPromptTemplate(input: {
   );
 
   const comments = formatComments(input.files);
+  const reviewComment = input.reviewComment.trim();
   const values: Record<string, string> = {
     workspace: input.workspaceName,
     comments: comments.length > 0 ? comments.join("\n") : "_No comments._",
-    reviewComment: input.reviewComment.trim() || "_None._",
+    reviewComment,
     // Legacy placeholders, still supported for templates saved by earlier versions.
     seenCount: String(seen.length),
     totalCount: String(nonIgnored.length),
@@ -67,9 +73,10 @@ export function expandPromptTemplate(input: {
   };
 
   // Single pass so placeholder-like text inside comments is never expanded.
-  const prompt = input.template.replace(/\{\{(\w+)\}\}/g, (match, key: string) =>
+  let prompt = input.template.replace(/\{\{(\w+)\}\}/g, (match, key: string) =>
     key in values ? values[key]! : match,
   );
+  if (!reviewComment) prompt = omitEmptyGeneralComment(prompt);
 
   const sections = [prompt.trimEnd()];
   if (input.includeFileLists) {

@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ComponentRef,
+} from "react";
 import { Pressable, Text, View } from "react-native";
 import { useRpc, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
@@ -10,7 +20,7 @@ import { InlineCommentCard } from "./inline-comment";
 import {
   composerKeyProps,
   isEditableTarget,
-  reviewKeyAction,
+  nextReviewKey,
   webDocument,
   type WebKeyEvent,
 } from "./keyboard";
@@ -88,26 +98,6 @@ function isSelectableLine(line: DisplayLine): boolean {
   return side != null && lineNumberForSide(line, side) != null;
 }
 
-/** Keeps the cursor on a commentable line, falling back to the first one. */
-function resolveCursorId(lines: readonly DisplayLine[], cursorId: string | null): string | null {
-  const selectable = lines.filter(isSelectableLine);
-  if (selectable.some((line) => line.id === cursorId)) return cursorId;
-  return selectable[0]?.id ?? null;
-}
-
-function moveCursorId(
-  lines: readonly DisplayLine[],
-  cursorId: string | null,
-  delta: number,
-): string | null {
-  const selectable = lines.filter(isSelectableLine);
-  if (selectable.length === 0) return null;
-  const index = selectable.findIndex((line) => line.id === cursorId);
-  if (index < 0) return selectable[0]!.id;
-  const next = Math.min(selectable.length - 1, Math.max(0, index + delta));
-  return selectable[next]!.id;
-}
-
 /** Inclusive range between two display lines, using the side of the first line. */
 function rangeBetween(
   lines: readonly DisplayLine[],
@@ -129,6 +119,303 @@ function rangeBetween(
   }
   if (startLine == null || endLine == null) return null;
   return { side, startLine, endLine };
+}
+
+const IDLE_MARK = { cursor: false, selected: false };
+
+type LineMark = { cursor: boolean; selected: boolean };
+type ScrollAlign = "nearest" | "start" | "end";
+
+/**
+ * Line marker kept outside React state. A j/k repeat must not re-render the file:
+ * rows subscribe here and bail out unless their own cursor or selection bit changes.
+ */
+class LineCursorStore {
+  cursorId: string | null = null;
+  visualAnchorId: string | null = null;
+  scrollAlign: ScrollAlign = "nearest";
+  scrollSeq = 0;
+  lines: readonly DisplayLine[] = [];
+  selectableIds: string[] = [];
+  private indexById = new Map<string, number>();
+  private selected = new Set<string>();
+  private marks = new Map<string, LineMark>();
+  private listeners = new Map<string, Set<() => void>>();
+  private subscribeFns = new Map<string, (listener: () => void) => () => void>();
+  private scrollListeners = new Set<() => void>();
+
+  /** Stable per line id so a row subscribes once, not on every parent render. */
+  subscribeFor(id: string): (listener: () => void) => () => void {
+    const existing = this.subscribeFns.get(id);
+    if (existing) return existing;
+    const subscribe = (listener: () => void) => {
+      let bucket = this.listeners.get(id);
+      if (!bucket) {
+        bucket = new Set();
+        this.listeners.set(id, bucket);
+      }
+      const active = bucket;
+      active.add(listener);
+      return () => {
+        active.delete(listener);
+        if (active.size === 0) this.listeners.delete(id);
+      };
+    };
+    this.subscribeFns.set(id, subscribe);
+    return subscribe;
+  }
+
+  subscribeScroll = (listener: () => void) => {
+    this.scrollListeners.add(listener);
+    return () => {
+      this.scrollListeners.delete(listener);
+    };
+  };
+
+  mark(id: string): LineMark {
+    const cursor = this.cursorId === id;
+    const selected = this.selected.has(id);
+    if (!cursor && !selected) return IDLE_MARK;
+    const prev = this.marks.get(id);
+    if (prev && prev.cursor === cursor && prev.selected === selected) return prev;
+    const next = { cursor, selected };
+    this.marks.set(id, next);
+    return next;
+  }
+
+  syncLines(lines: readonly DisplayLine[]) {
+    if (this.lines === lines) return;
+    this.lines = lines;
+    this.selectableIds = [];
+    this.indexById = new Map();
+    for (const line of lines) {
+      if (!isSelectableLine(line)) continue;
+      this.indexById.set(line.id, this.selectableIds.length);
+      this.selectableIds.push(line.id);
+    }
+    const prevCursor = this.cursorId;
+    const prevSelected = this.selected;
+    if (this.cursorId != null && !this.indexById.has(this.cursorId)) this.cursorId = null;
+    if (this.visualAnchorId != null && !lines.some((line) => line.id === this.visualAnchorId)) {
+      this.visualAnchorId = null;
+    }
+    if (this.visualAnchorId) this.rebuildSelected();
+    else if (this.selected.size > 0) this.selected = new Set();
+    const dirty = this.diffIds(prevSelected, this.selected, null);
+    if (prevCursor && prevCursor !== this.cursorId) dirty.add(prevCursor);
+    if (this.cursorId && prevCursor !== this.cursorId) dirty.add(this.cursorId);
+    if (dirty.size > 0) this.emitIds(dirty);
+  }
+
+  reset() {
+    const dirty = this.cursorId != null || this.visualAnchorId != null || this.selected.size > 0;
+    this.cursorId = null;
+    this.visualAnchorId = null;
+    this.selected = new Set();
+    this.marks.clear();
+    this.scrollAlign = "nearest";
+    if (dirty) this.emitAll();
+  }
+
+  currentId(): string | null {
+    if (this.cursorId != null && this.indexById.has(this.cursorId)) return this.cursorId;
+    return this.selectableIds[0] ?? null;
+  }
+
+  move(delta: number) {
+    const ids = this.selectableIds;
+    if (ids.length === 0) return;
+    const index = this.cursorId != null ? this.indexById.get(this.cursorId) : undefined;
+    const from = index == null ? 0 : index;
+    const next = Math.min(ids.length - 1, Math.max(0, from + delta));
+    this.commitCursor(ids[next]!, "nearest");
+  }
+
+  jump(edge: "start" | "end") {
+    const ids = this.selectableIds;
+    if (ids.length === 0) return;
+    const id = edge === "start" ? ids[0]! : ids[ids.length - 1]!;
+    this.commitCursor(id, edge);
+  }
+
+  focusLine(id: string) {
+    const prevSelected = this.selected;
+    this.visualAnchorId = null;
+    this.selected = new Set();
+    this.commitCursor(id, "nearest");
+    if (prevSelected.size > 0) this.emitIds(prevSelected);
+  }
+
+  toggleVisual() {
+    if (this.visualAnchorId) {
+      this.clearVisual();
+      return;
+    }
+    const id = this.currentId();
+    if (!id) return;
+    const prevCursor = this.cursorId;
+    this.cursorId = id;
+    this.visualAnchorId = id;
+    this.rebuildSelected();
+    this.scrollAlign = "nearest";
+    this.scrollSeq += 1;
+    const dirty = new Set<string>(this.selected);
+    if (prevCursor) dirty.add(prevCursor);
+    this.emitIds(dirty);
+    this.emitScroll();
+  }
+
+  clearVisual() {
+    if (!this.visualAnchorId && this.selected.size === 0) return;
+    const prevSelected = this.selected;
+    this.visualAnchorId = null;
+    this.selected = new Set();
+    this.emitIds(prevSelected);
+  }
+
+  private commitCursor(id: string | null, align: ScrollAlign) {
+    const prevCursor = this.cursorId;
+    const prevSelected = this.selected;
+    this.cursorId = id;
+    if (this.visualAnchorId) this.rebuildSelected();
+    this.scrollAlign = align;
+    this.scrollSeq += 1;
+    const dirty = new Set<string>();
+    if (prevCursor) dirty.add(prevCursor);
+    if (id) dirty.add(id);
+    if (prevSelected !== this.selected) {
+      for (const lineId of prevSelected) {
+        if (!this.selected.has(lineId)) dirty.add(lineId);
+      }
+      for (const lineId of this.selected) {
+        if (!prevSelected.has(lineId)) dirty.add(lineId);
+      }
+    }
+    this.emitIds(dirty);
+    this.emitScroll();
+  }
+
+  private rebuildSelected() {
+    const next = new Set<string>();
+    if (this.visualAnchorId && this.cursorId) {
+      const range = rangeBetween(this.lines, this.visualAnchorId, this.cursorId);
+      if (range) {
+        for (const line of this.lines) {
+          if (lineInRange(line, range)) next.add(line.id);
+        }
+      }
+    }
+    this.selected = next;
+  }
+
+  private diffIds(
+    prevSelected: ReadonlySet<string>,
+    nextSelected: ReadonlySet<string>,
+    cursorId: string | null,
+  ): Set<string> {
+    const dirty = new Set<string>();
+    if (cursorId) dirty.add(cursorId);
+    for (const lineId of prevSelected) {
+      if (!nextSelected.has(lineId)) dirty.add(lineId);
+    }
+    for (const lineId of nextSelected) {
+      if (!prevSelected.has(lineId)) dirty.add(lineId);
+    }
+    return dirty;
+  }
+
+  private emitIds(ids: Iterable<string>) {
+    for (const id of ids) {
+      const bucket = this.listeners.get(id);
+      if (!bucket) continue;
+      for (const listener of bucket) listener();
+    }
+  }
+
+  private emitAll() {
+    for (const bucket of this.listeners.values()) {
+      for (const listener of bucket) listener();
+    }
+  }
+
+  private emitScroll() {
+    for (const listener of this.scrollListeners) listener();
+  }
+}
+
+type ScrollEl = {
+  getBoundingClientRect?: () => { top: number; bottom: number };
+  scrollTop?: number;
+  scrollHeight?: number;
+  clientHeight?: number;
+  parentElement?: ScrollEl | null;
+  scrollIntoView?: (options: { block: ScrollAlign }) => void;
+};
+
+function findVerticalScroller(el: ScrollEl): ScrollEl | null {
+  const getStyle = (
+    globalThis as { getComputedStyle?: (node: ScrollEl) => { overflowY?: string } }
+  ).getComputedStyle;
+  let parent = el.parentElement ?? null;
+  while (parent) {
+    const overflowY = getStyle?.(parent).overflowY ?? "";
+    const height = parent.clientHeight ?? 0;
+    const scrollHeight = parent.scrollHeight ?? 0;
+    if (
+      (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") &&
+      scrollHeight > height + 1
+    ) {
+      return parent;
+    }
+    parent = parent.parentElement ?? null;
+  }
+  return null;
+}
+
+/** Scrolls one row inside the diff pane. Skips the layout read when it is already visible. */
+function scrollLineIntoView(node: object, align: ScrollAlign) {
+  const el = node as ScrollEl;
+  if (typeof el.getBoundingClientRect !== "function") return;
+  const scroller = findVerticalScroller(el);
+  if (
+    !scroller ||
+    typeof scroller.getBoundingClientRect !== "function" ||
+    typeof scroller.scrollTop !== "number"
+  ) {
+    el.scrollIntoView?.({ block: align });
+    return;
+  }
+  const row = el.getBoundingClientRect();
+  const view = scroller.getBoundingClientRect();
+  if (align === "nearest" && row.top >= view.top && row.bottom <= view.bottom) return;
+  let delta = 0;
+  if (align === "start") delta = row.top - view.top;
+  else if (align === "end") delta = row.bottom - view.bottom;
+  else if (row.top < view.top) delta = row.top - view.top;
+  else delta = row.bottom - view.bottom;
+  scroller.scrollTop += delta;
+}
+
+function CursorFollow({
+  store,
+  rowNodes,
+}: {
+  store: LineCursorStore;
+  rowNodes: { current: Map<string, RowNode> };
+}) {
+  const seq = useSyncExternalStore(
+    store.subscribeScroll,
+    () => store.scrollSeq,
+    () => store.scrollSeq,
+  );
+  useLayoutEffect(() => {
+    if (seq === 0) return;
+    const id = store.cursorId;
+    if (!id) return;
+    const node = rowNodes.current.get(id);
+    if (node) scrollLineIntoView(node, store.scrollAlign);
+  }, [rowNodes, seq, store]);
+  return null;
 }
 
 function expandAxis(file: DiffFile): "old" | "new" {
@@ -249,13 +536,13 @@ function buildDisplay(
   return { lines, gaps };
 }
 
-function DiffLineRow({
+const DiffLineRow = memo(function DiffLineRow({
   line,
   theme,
   palette,
   typography,
   selected,
-  cursor,
+  store,
   rowRef,
   platform,
   onPressLine,
@@ -267,8 +554,9 @@ function DiffLineRow({
   theme: Theme;
   palette: ReturnType<typeof diffPalette>;
   typography: DiffTypography;
+  /** Draft/drag highlight. Keyboard selection comes from `store`. */
   selected: boolean;
-  cursor: boolean;
+  store: LineCursorStore;
   rowRef(node: RowNode | null): void;
   platform: "ios" | "android" | "web";
   onPressLine(side: "old" | "new", lineNumber: number, id: string): void;
@@ -276,11 +564,18 @@ function DiffLineRow({
   onDragStartLine(side: "old" | "new", lineNumber: number, id: string): void;
   onDragEndLine(): void;
 }) {
+  const mark = useSyncExternalStore(
+    store.subscribeFor(line.id),
+    () => store.mark(line.id),
+    () => store.mark(line.id),
+  );
+  const cursor = mark.cursor;
+  const highlighted = selected || mark.selected;
   const side = lineSide(line);
   const lineNumber = side ? lineNumberForSide(line, side) : null;
   const disabled = side == null || lineNumber == null;
   let backgroundColor = "transparent";
-  if (selected) backgroundColor = palette.selectBg;
+  if (highlighted) backgroundColor = palette.selectBg;
   else if (line.type === "add") backgroundColor = palette.addBg;
   else if (line.type === "del") backgroundColor = palette.delBg;
 
@@ -387,6 +682,126 @@ function DiffLineRow({
       />
     </Pressable>
   );
+});
+
+type DraftRange = { side: "old" | "new"; startLine: number; endLine: number };
+
+/**
+ * New-comment composer. Text stays in this component so typing does not re-render the file.
+ * `bodyRef` lets the parent see whether the draft is empty without storing the text in state.
+ */
+function LineDraftBox({
+  range,
+  bodyRef,
+  theme,
+  onSave,
+  onCancel,
+}: {
+  range: DraftRange;
+  bodyRef: { current: string };
+  theme: Theme;
+  onSave(body: string): Promise<void>;
+  onCancel(): void;
+}) {
+  const [body, setBody] = useState(() => bodyRef.current);
+  const [saving, setSaving] = useState(false);
+  const onChange = useCallback(
+    (text: string) => {
+      bodyRef.current = text;
+      setBody(text);
+    },
+    [bodyRef],
+  );
+  const save = useCallback(() => {
+    if (saving || !bodyRef.current.trim()) return;
+    setSaving(true);
+    void onSave(bodyRef.current).finally(() => setSaving(false));
+  }, [bodyRef, onSave, saving]);
+  const keyProps = useMemo(
+    () => composerKeyProps({ onSave: save, onCancel }),
+    [onCancel, save],
+  );
+  const styles = useMemo(
+    () => ({
+      box: {
+        marginLeft: 88,
+        marginVertical: 4,
+        padding: 10,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: theme.colors.accent,
+        backgroundColor: theme.colors.surface1,
+        gap: 8,
+      },
+      muted: { color: theme.colors.foregroundMuted, fontSize: 13 },
+      input: {
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        borderRadius: 6,
+        padding: 10,
+        color: theme.colors.foreground,
+        minHeight: 64,
+        textAlignVertical: "top" as const,
+      },
+      actions: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 12,
+        flexWrap: "wrap" as const,
+      },
+      button: {
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 6,
+        backgroundColor: theme.colors.accent,
+        justifyContent: "center" as const,
+      },
+      buttonText: { color: theme.colors.accentForeground, fontWeight: "600" as const },
+      cancelButton: {
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        justifyContent: "center" as const,
+      },
+      action: { color: theme.colors.accent, fontSize: 12, fontWeight: "600" as const },
+      hint: { color: theme.colors.foregroundMuted, fontSize: 11, marginLeft: "auto" as const },
+    }),
+    [theme],
+  );
+  const lo = Math.min(range.startLine, range.endLine);
+  const hi = Math.max(range.startLine, range.endLine);
+
+  return (
+    <View style={styles.box}>
+      <Text style={styles.muted}>
+        Comment on {range.side} L{lo}
+        {lo !== hi ? `–${hi}` : ""}
+      </Text>
+      <TextInput
+        multiline
+        value={body}
+        onChangeText={onChange}
+        placeholder="Line comment"
+        placeholderTextColor={theme.colors.foregroundMuted}
+        style={styles.input}
+        autoFocus
+        {...keyProps}
+      />
+      <View style={styles.actions}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={save}
+          style={styles.button}
+          disabled={saving}
+        >
+          <Text style={styles.buttonText}>{saving ? "Saving…" : "Save comment"}</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={onCancel} style={styles.cancelButton}>
+          <Text style={styles.action}>Cancel</Text>
+        </Pressable>
+        <Text style={styles.hint}>Ctrl+Enter to save</Text>
+      </View>
+    </View>
+  );
 }
 
 export function DiffView({
@@ -424,36 +839,41 @@ export function DiffView({
     startLine: number;
     moved: boolean;
   } | null>(null);
-  const [draft, setDraft] = useState<{
-    side: "old" | "new";
-    startLine: number;
-    endLine: number;
-    body: string;
-  } | null>(null);
+  const [draft, setDraft] = useState<DraftRange | null>(null);
+  const draftBodyRef = useRef("");
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [editBody, setEditBody] = useState("");
-  const [savingDraft, setSavingDraft] = useState(false);
   const [fileCommentOpen, setFileCommentOpen] = useState(false);
-  // Keyboard line marker, and the anchor line while `v` visual selection is active.
-  const [cursorId, setCursorId] = useState<string | null>(null);
-  const [visualAnchorId, setVisualAnchorId] = useState<string | null>(null);
+  const cursorStoreRef = useRef<LineCursorStore | null>(null);
+  if (cursorStoreRef.current == null) cursorStoreRef.current = new LineCursorStore();
+  const cursorStore = cursorStoreRef.current;
   const rowNodes = useRef(new Map<string, RowNode>());
+  const rowRefCallbacks = useRef(new Map<string, (node: RowNode | null) => void>());
+  const pendingKeyRef = useRef<"g" | null>(null);
 
   useEffect(() => {
     setExpanded(new Map());
     setTotalLines(null);
     setDraft(null);
+    draftBodyRef.current = "";
     setEditingKey(null);
     setFileCommentOpen(false);
-    setCursorId(null);
-    setVisualAnchorId(null);
+    cursorStore.reset();
+    pendingKeyRef.current = null;
+    rowNodes.current.clear();
+    rowRefCallbacks.current.clear();
     dragging.current = null;
-  }, [pathKey]);
+  }, [cursorStore, pathKey]);
 
   const { lines, gaps } = useMemo(
     () => buildDisplay(hunks, expanded, totalLines, axis),
     [axis, expanded, hunks, totalLines],
   );
+
+  useLayoutEffect(() => {
+    cursorStore.syncLines(lines);
+  }, [cursorStore, lines]);
 
   const styles = useMemo(
     () => ({
@@ -468,25 +888,6 @@ export function DiffView({
       scrollContent: { gap: 12, paddingTop: 12, paddingBottom: 24 },
       muted: { color: theme.colors.foregroundMuted, fontSize: 13 },
       error: { color: theme.colors.statusDanger, fontSize: 13 },
-      input: {
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-        borderRadius: 6,
-        padding: 10,
-        color: theme.colors.foreground,
-        minHeight: 64,
-        textAlignVertical: "top" as const,
-      },
-      draftBox: {
-        marginLeft: 88,
-        marginVertical: 4,
-        padding: 10,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: theme.colors.accent,
-        backgroundColor: theme.colors.surface1,
-        gap: 8,
-      },
       hunk: {
         borderWidth: 1,
         borderColor: theme.colors.border,
@@ -498,27 +899,6 @@ export function DiffView({
       hunkScroll: { width: "100%" as const, alignSelf: "stretch" as const },
       hunkScrollContent: { flexGrow: 1, minWidth: "100%" as const },
       hunkInner: { flexGrow: 1, minWidth: "100%" as const, alignSelf: "stretch" as const },
-      button: {
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 6,
-        backgroundColor: theme.colors.accent,
-        justifyContent: "center" as const,
-      },
-      buttonText: { color: theme.colors.accentForeground, fontWeight: "600" as const },
-      actions: {
-        flexDirection: "row" as const,
-        alignItems: "center" as const,
-        gap: 12,
-        flexWrap: "wrap" as const,
-      },
-      cancelButton: {
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        justifyContent: "center" as const,
-      },
-      action: { color: theme.colors.accent, fontSize: 12, fontWeight: "600" as const },
-      hint: { color: theme.colors.foregroundMuted, fontSize: 11, marginLeft: "auto" as const },
     }),
     [theme],
   );
@@ -556,43 +936,48 @@ export function DiffView({
     [cwd, loadContext, pathKey, toast],
   );
 
-  const onDragStartLine = useCallback((side: "old" | "new", line: number, id: string) => {
-    dragging.current = { side, startLine: line, moved: false };
-    setEditingKey(null);
-    setCursorId(id);
-    setVisualAnchorId(null);
-  }, []);
+  const onDragStartLine = useCallback(
+    (side: "old" | "new", line: number, id: string) => {
+      dragging.current = { side, startLine: line, moved: false };
+      setEditingKey(null);
+      cursorStore.focusLine(id);
+    },
+    [cursorStore],
+  );
 
   const onDragEnterLine = useCallback((side: "old" | "new", line: number) => {
     const active = dragging.current;
     if (!active || active.side !== side) return;
     if (line === active.startLine) return;
     active.moved = true;
-    setDraft((current) => ({
-      side,
-      startLine: Math.min(active.startLine, line),
-      endLine: Math.max(active.startLine, line),
-      body: current?.side === side ? (current.body ?? "") : "",
-    }));
+    setDraft((current) => {
+      if (current?.side !== side) draftBodyRef.current = "";
+      return {
+        side,
+        startLine: Math.min(active.startLine, line),
+        endLine: Math.max(active.startLine, line),
+      };
+    });
   }, []);
 
   const applyTapSelection = useCallback((side: "old" | "new", line: number) => {
     setDraft((current) => {
       if (!current || current.side !== side) {
-        return { side, startLine: line, endLine: line, body: "" };
+        draftBodyRef.current = "";
+        return { side, startLine: line, endLine: line };
       }
       const lo = Math.min(current.startLine, current.endLine);
       const hi = Math.max(current.startLine, current.endLine);
       // Same single line: keep (confirmed). Outside range with empty body: restart.
       if (lo === hi && lo === line) return current;
-      if ((line < lo || line > hi) && !current.body.trim()) {
-        return { side, startLine: line, endLine: line, body: "" };
+      if ((line < lo || line > hi) && !draftBodyRef.current.trim()) {
+        draftBodyRef.current = "";
+        return { side, startLine: line, endLine: line };
       }
       return {
         side,
         startLine: Math.min(lo, line),
         endLine: Math.max(hi, line),
-        body: current.body,
       };
     });
     setEditingKey(null);
@@ -621,50 +1006,42 @@ export function DiffView({
   const onPressLine = useCallback(
     (side: "old" | "new", line: number, id: string) => {
       applyTapSelection(side, line);
-      setCursorId(id);
-      setVisualAnchorId(null);
+      cursorStore.focusLine(id);
     },
-    [applyTapSelection],
+    [applyTapSelection, cursorStore],
   );
 
-  const onDraftBody = useCallback((body: string) => {
-    setDraft((current) => (current ? { ...current, body } : current));
-  }, []);
-
-  const saveDraft = useCallback(async () => {
-    if (!draft || !draft.body.trim() || savingDraft) return;
-    setSavingDraft(true);
-    try {
+  const saveDraft = useCallback(
+    async (body: string) => {
+      const current = draftRef.current;
+      const trimmed = body.trim();
+      if (!current || !trimmed) return;
       const ok = await onSaveLineComment({
-        side: draft.side,
-        startLine: Math.min(draft.startLine, draft.endLine),
-        endLine: Math.max(draft.startLine, draft.endLine),
-        body: draft.body.trim(),
+        side: current.side,
+        startLine: Math.min(current.startLine, current.endLine),
+        endLine: Math.max(current.startLine, current.endLine),
+        body: trimmed,
       });
-      if (ok) setDraft(null);
-      else toast.error("Could not save comment");
-    } finally {
-      setSavingDraft(false);
-    }
-  }, [draft, onSaveLineComment, savingDraft, toast]);
-
-  const saveDraftPress = useCallback(() => {
-    void saveDraft();
-  }, [saveDraft]);
-  const cancelDraft = useCallback(() => setDraft(null), []);
-  const draftKeyProps = useMemo(
-    () => composerKeyProps({ onSave: saveDraftPress, onCancel: cancelDraft }),
-    [cancelDraft, saveDraftPress],
+      if (ok) {
+        draftBodyRef.current = "";
+        setDraft(null);
+      } else toast.error("Could not save comment");
+    },
+    [onSaveLineComment, toast],
   );
+  const cancelDraft = useCallback(() => {
+    draftBodyRef.current = "";
+    setDraft(null);
+  }, []);
 
   const startEditComment = useCallback((comment: LineComment) => {
     setEditingKey(commentKey(comment));
-    setEditBody(comment.body);
+    draftBodyRef.current = "";
     setDraft(null);
   }, []);
   const saveEditComment = useCallback(
-    async (comment: LineComment) => {
-      const trimmed = editBody.trim();
+    async (comment: LineComment, body: string) => {
+      const trimmed = body.trim();
       if (!trimmed) {
         toast.error("Comment body is empty — use Delete to remove it");
         return;
@@ -673,7 +1050,7 @@ export function DiffView({
       if (ok) setEditingKey(null);
       else toast.error("Could not save comment");
     },
-    [editBody, onSaveLineComment, toast],
+    [onSaveLineComment, toast],
   );
   const cancelEditComment = useCallback(() => setEditingKey(null), []);
   const deleteComment = useCallback(
@@ -707,23 +1084,31 @@ export function DiffView({
         return;
       }
       setEditingKey(null);
-      setDraft({ ...range, body: "" });
+      draftBodyRef.current = "";
+      setDraft(range);
     },
     [progress.lineComments, startEditComment],
   );
 
-  const registerRow = useCallback((id: string, node: RowNode | null) => {
-    if (node) rowNodes.current.set(id, node);
-    else rowNodes.current.delete(id);
+  const rowRefFor = useCallback((id: string) => {
+    const existing = rowRefCallbacks.current.get(id);
+    if (existing) return existing;
+    const callback = (node: RowNode | null) => {
+      if (node) rowNodes.current.set(id, node);
+      else rowNodes.current.delete(id);
+    };
+    rowRefCallbacks.current.set(id, callback);
+    return callback;
   }, []);
 
   // Returns true when the key was handled (the caller then prevents default).
   const handleKey = (key: string | undefined): boolean => {
-    const action = reviewKeyAction(key);
-    if (!action) return false;
+    const parsed = nextReviewKey(pendingKeyRef.current, key);
+    pendingKeyRef.current = parsed.pending;
+    const action = parsed.action;
     if (action === "escape") {
-      if (visualAnchorId) {
-        setVisualAnchorId(null);
+      if (cursorStore.visualAnchorId) {
+        cursorStore.clearVisual();
         return true;
       }
       if (draft) {
@@ -733,33 +1118,39 @@ export function DiffView({
       return false;
     }
     // Composers own the keyboard while open, so shortcuts must not fire through them.
-    if (!keyboardEnabled || draft || editingKey || fileCommentOpen) return false;
+    if (!keyboardEnabled || draft || editingKey || fileCommentOpen) {
+      pendingKeyRef.current = null;
+      return false;
+    }
+    if (!action) return parsed.pending === "g";
 
-    const current = resolveCursorId(lines, cursorId);
+    cursorStore.syncLines(lines);
     switch (action) {
       case "cursorDown":
       case "cursorUp":
-        setCursorId(moveCursorId(lines, current, action === "cursorDown" ? 1 : -1));
+        cursorStore.move(action === "cursorDown" ? 1 : -1);
+        return true;
+      case "cursorTop":
+        cursorStore.jump("start");
+        return true;
+      case "cursorBottom":
+        cursorStore.jump("end");
         return true;
       case "toggleVisual":
-        if (visualAnchorId) {
-          setVisualAnchorId(null);
-          return true;
-        }
-        if (current) {
-          setCursorId(current);
-          setVisualAnchorId(current);
-        }
+        cursorStore.toggleVisual();
         return true;
       case "lineComment": {
-        if (visualAnchorId) {
-          const range = current ? rangeBetween(lines, visualAnchorId, current) : null;
-          setVisualAnchorId(null);
+        if (cursorStore.visualAnchorId) {
+          const anchor = cursorStore.visualAnchorId;
+          const current = cursorStore.cursorId;
+          const range = current ? rangeBetween(lines, anchor, current) : null;
+          cursorStore.clearVisual();
           if (range) openComposer(range);
           return true;
         }
+        const current = cursorStore.currentId();
         if (!current) return true;
-        setCursorId(current);
+        if (cursorStore.cursorId !== current) cursorStore.focusLine(current);
         const range = rangeBetween(lines, current, current);
         if (range) openComposer(range);
         return true;
@@ -786,20 +1177,15 @@ export function DiffView({
     if (!doc) return;
     const onKeyDown = (event: WebKeyEvent) => {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
-      if (isEditableTarget(event.target)) return;
+      if (isEditableTarget(event.target)) {
+        pendingKeyRef.current = null;
+        return;
+      }
       if (handleKeyRef.current(event.key)) event.preventDefault?.();
     };
     doc.addEventListener("keydown", onKeyDown);
     return () => doc.removeEventListener("keydown", onKeyDown);
   }, [platform]);
-
-  useEffect(() => {
-    if (platform !== "web" || !cursorId) return;
-    const node = rowNodes.current.get(cursorId) as unknown as
-      | { scrollIntoView?(options: { block: "nearest" }): void }
-      | undefined;
-    node?.scrollIntoView?.({ block: "nearest" });
-  }, [cursorId, platform]);
 
   const header = (
     <FileHeader
@@ -859,9 +1245,7 @@ export function DiffView({
         startLine: Math.min(draft.startLine, draft.endLine),
         endLine: Math.max(draft.startLine, draft.endLine),
       }
-    : visualAnchorId && cursorId
-      ? rangeBetween(lines, visualAnchorId, cursorId)
-      : null;
+    : null;
 
   const gapByBefore = new Map<string | null, Gap[]>();
   for (const gap of gaps) {
@@ -873,6 +1257,7 @@ export function DiffView({
   return (
     <View style={styles.root}>
       {header}
+      <CursorFollow store={cursorStore} rowNodes={rowNodes} />
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         {progress.fileComment ? (
           <Text style={styles.muted} numberOfLines={2}>
@@ -881,7 +1266,7 @@ export function DiffView({
         ) : null}
         <Text style={styles.muted}>
           {platform === "web"
-            ? "Click or drag to comment. Keys: j/k move · c comment line · v, j/k, c comment a range · C file note · r viewed · i ignore"
+            ? "Click or drag to comment. Keys: j/k move · gg/G top/bottom · c comment line · v, j/k, c comment a range · C file note · r viewed · i ignore"
             : "Tap a line to comment; tap another to set a range. Tap outside the range (empty draft) to start over."}
         </Text>
 
@@ -918,8 +1303,8 @@ export function DiffView({
                       palette={palette}
                       typography={typography}
                       selected={selected}
-                      cursor={line.id === cursorId}
-                      rowRef={(node) => registerRow(line.id, node)}
+                      store={cursorStore}
+                      rowRef={rowRefFor(line.id)}
                       platform={platform}
                       onPressLine={onPressLine}
                       onDragEnterLine={onDragEnterLine}
@@ -934,54 +1319,21 @@ export function DiffView({
                           comment={comment}
                           theme={theme}
                           editing={editingKey === key}
-                          draftBody={editingKey === key ? editBody : comment.body}
                           onStartEdit={startEditComment}
-                          onChangeDraft={setEditBody}
-                          onSave={(next) => void saveEditComment(next)}
+                          onSave={(next, body) => void saveEditComment(next, body)}
                           onCancel={cancelEditComment}
                           onDelete={(next) => void deleteComment(next)}
                         />
                       );
                     })}
-                    {draftHere ? (
-                      <View style={styles.draftBox}>
-                        <Text style={styles.muted}>
-                          Comment on {draft.side} L{Math.min(draft.startLine, draft.endLine)}
-                          {draft.startLine !== draft.endLine
-                            ? `–${Math.max(draft.startLine, draft.endLine)}`
-                            : ""}
-                        </Text>
-                        <TextInput
-                          multiline
-                          value={draft.body}
-                          onChangeText={onDraftBody}
-                          placeholder="Line comment"
-                          placeholderTextColor={theme.colors.foregroundMuted}
-                          style={styles.input}
-                          autoFocus
-                          {...draftKeyProps}
-                        />
-                        <View style={styles.actions}>
-                          <Pressable
-                            accessibilityRole="button"
-                            onPress={saveDraftPress}
-                            style={styles.button}
-                            disabled={savingDraft}
-                          >
-                            <Text style={styles.buttonText}>
-                              {savingDraft ? "Saving…" : "Save comment"}
-                            </Text>
-                          </Pressable>
-                          <Pressable
-                            accessibilityRole="button"
-                            onPress={cancelDraft}
-                            style={styles.cancelButton}
-                          >
-                            <Text style={styles.action}>Cancel</Text>
-                          </Pressable>
-                          <Text style={styles.hint}>Ctrl+Enter to save</Text>
-                        </View>
-                      </View>
+                    {draftHere && draft ? (
+                      <LineDraftBox
+                        range={draft}
+                        bodyRef={draftBodyRef}
+                        theme={theme}
+                        onSave={saveDraft}
+                        onCancel={cancelDraft}
+                      />
                     ) : null}
                     {(gapByBefore.get(line.id) ?? []).map((gap) => (
                       <ExpandButton
