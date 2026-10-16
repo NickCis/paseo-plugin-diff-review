@@ -51,8 +51,10 @@ host settings, so every client on that daemon shares the same review state.
 5. **Send** — pick a recent agent or create one, optionally add a note about the review as a
    whole, and choose whether to include viewed/ignored file lists (off by default; only
    comments are sent otherwise). The prompt comes from settings; eligible viewed files (no
-   comments) are `git add`ed afterward.
-6. Edit the prompt under **Settings → Diff Review**.
+   comments) are `git add`ed afterward. File and line comments are cleared after a successful
+   send. Viewed and ignored marks stay.
+6. Header ⋯ (when the workspace has changes) — **Clear comments**, after a confirmation.
+7. Edit the prompt under **Settings → Diff Review**.
 
 ## Distribute
 

@@ -10,10 +10,12 @@ import {
   countProgress,
   deleteLineComment,
   getFileProgress,
+  clearWorkspaceComments,
   pruneWorkspaceProgress,
   upsertLineComment,
   withUpdatedFile,
   workspaceFiles,
+  workspaceHasComments,
 } from "./progress";
 import { treeOrderedFiles } from "./file-tree";
 import { sendDiffReview, type SendTarget } from "./send-review";
@@ -377,6 +379,10 @@ export function useDiffReview(workspaceId: string) {
     [saveProgress, selectedPathKey, workspaceId],
   );
 
+  const clearComments = useCallback(async (): Promise<boolean> => {
+    return saveProgress((values) => clearWorkspaceComments(values, workspaceId));
+  }, [saveProgress, workspaceId]);
+
   const openSend = useCallback(() => setSendOpen(true), []);
   const onRefreshPress = useCallback(() => {
     void refreshSnapshot();
@@ -401,6 +407,7 @@ export function useDiffReview(workspaceId: string) {
           includeFileLists,
           stage,
         });
+        await clearComments();
         setStatusMessage(result.statusMessage);
         openAgent?.({ agentId: result.agentId });
         setSendNote("");
@@ -413,6 +420,7 @@ export function useDiffReview(workspaceId: string) {
       }
     },
     [
+      clearComments,
       cwd,
       files,
       includeFileLists,
@@ -451,6 +459,7 @@ export function useDiffReview(workspaceId: string) {
     cwd,
     progress,
     counts,
+    hasComments: workspaceHasComments(progress),
     fileProgress,
     typography,
     toggleViewed,
@@ -460,6 +469,7 @@ export function useDiffReview(workspaceId: string) {
     onChangeFileComment,
     onSaveLineComment,
     onDeleteLineComment,
+    clearComments,
     openSend,
     onRefreshPress,
     sendToAgent,

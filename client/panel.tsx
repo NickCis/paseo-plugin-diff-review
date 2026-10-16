@@ -1,7 +1,7 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
-import { ScrollView, useToast } from "@getpaseo/plugin/client/react-native";
+import { Icon, Modal, ScrollView, useToast } from "@getpaseo/plugin/client/react-native";
 import { DiffView } from "./diff-view";
 import { FileList } from "./file-list";
 import { SendSheet } from "./send-sheet";
@@ -58,6 +58,47 @@ export function DiffReviewPanel({
     if (!selectedPathKey) return "No file selected";
     return discardFile(selectedPathKey);
   }, [discardFile, selectedPathKey]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  const toggleMenu = useCallback(() => setMenuOpen((open) => !open), []);
+  const askClearComments = useCallback(() => {
+    setMenuOpen(false);
+    setConfirmClear(true);
+  }, []);
+  const clearComments = review.clearComments;
+  const confirmClearComments = useCallback(() => {
+    if (clearing) return;
+    setClearing(true);
+    void (async () => {
+      try {
+        const ok = await clearComments();
+        if (ok) setConfirmClear(false);
+        else toast.error("Could not clear comments");
+      } finally {
+        setClearing(false);
+      }
+    })();
+  }, [clearComments, clearing, toast]);
+
+  useEffect(() => {
+    if (!menuOpen || layout.platform !== "web") return;
+    const doc = (
+      globalThis as {
+        document?: {
+          addEventListener: (type: string, listener: () => void) => void;
+          removeEventListener: (type: string, listener: () => void) => void;
+        };
+      }
+    ).document;
+    if (!doc) return;
+    const timer = setTimeout(() => doc.addEventListener("mousedown", closeMenu), 0);
+    return () => {
+      clearTimeout(timer);
+      doc.removeEventListener("mousedown", closeMenu);
+    };
+  }, [closeMenu, layout.platform, menuOpen]);
 
   const styles = useMemo(
     () => ({
@@ -75,6 +116,7 @@ export function DiffReviewPanel({
         gap: 8,
         flexWrap: "wrap" as const,
         flexShrink: 0,
+        zIndex: menuOpen ? 20 : 1,
       },
       title: {
         color: theme.colors.foreground,
@@ -99,6 +141,46 @@ export function DiffReviewPanel({
       },
       buttonText: { color: theme.colors.accentForeground, fontWeight: "600" as const },
       buttonSecondaryText: { color: theme.colors.foreground, fontWeight: "600" as const },
+      menuAnchor: { position: "relative" as const, zIndex: 30 },
+      menuButton: {
+        width: 36,
+        height: 36,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        backgroundColor: theme.colors.surface1,
+        alignItems: "center" as const,
+        justifyContent: "center" as const,
+      },
+      menuPopover: {
+        position: "absolute" as const,
+        top: 40,
+        right: 0,
+        minWidth: 180,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        backgroundColor: theme.colors.surface1,
+        paddingVertical: 4,
+        zIndex: 40,
+        elevation: 16,
+        shadowColor: "#000",
+        shadowOpacity: 0.35,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 6 },
+      },
+      menuItem: { paddingVertical: 10, paddingHorizontal: 12 },
+      menuDanger: { color: theme.colors.statusDanger, fontSize: 13, fontWeight: "500" as const },
+      menuMuted: { color: theme.colors.foregroundMuted, fontSize: 11, marginTop: 2 },
+      confirmBody: { color: theme.colors.foreground, fontSize: 14 },
+      confirmActions: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 12,
+        marginTop: 16,
+      },
+      confirmDanger: { color: theme.colors.statusDanger, fontWeight: "600" as const },
+      confirmCancel: { color: theme.colors.foreground, fontWeight: "600" as const },
       body: layout.compact
         ? { flex: 1, minHeight: 0, gap: 12 }
         : { flex: 1, minHeight: 0, flexDirection: "row" as const, gap: 16 },
@@ -109,7 +191,7 @@ export function DiffReviewPanel({
       paneScroll: { flex: 1, minHeight: 0 },
       error: { color: theme.colors.statusDanger, fontSize: 13 },
     }),
-    [layout.compact, theme],
+    [layout.compact, menuOpen, theme],
   );
 
   if (!review.workspace || review.settings.status === "loading") {
@@ -146,6 +228,42 @@ export function DiffReviewPanel({
           <Text style={styles.muted}>{workspace.title?.trim() || workspace.name}</Text>
         </View>
         <View style={styles.actions}>
+          {review.files.length > 0 ? (
+            <View style={styles.menuAnchor}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="More actions"
+                onPress={toggleMenu}
+                style={styles.menuButton}
+              >
+                <Icon name="MoreHorizontal" size={16} color={theme.colors.foreground} />
+              </Pressable>
+              {menuOpen ? (
+                <View
+                  style={styles.menuPopover}
+                  {...(layout.platform === "web"
+                    ? {
+                        onMouseDown: (event: { stopPropagation?: () => void }) => {
+                          event.stopPropagation?.();
+                        },
+                      }
+                    : {})}
+                >
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={!review.hasComments || clearing}
+                    onPress={askClearComments}
+                    style={styles.menuItem}
+                  >
+                    <Text style={styles.menuDanger}>Clear comments</Text>
+                    {!review.hasComments ? (
+                      <Text style={styles.menuMuted}>No comments to clear</Text>
+                    ) : null}
+                  </Pressable>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             onPress={review.onRefreshPress}
@@ -222,6 +340,34 @@ export function DiffReviewPanel({
           )}
         </View>
       </View>
+      <Modal
+        open={confirmClear}
+        onOpenChange={setConfirmClear}
+        title="Clear comments"
+        icon={<Icon name="MessageSquare" size={18} color={theme.colors.foreground} />}
+      >
+        <Modal.Content>
+          <Text style={styles.confirmBody}>
+            Remove every file and line comment in this workspace? Viewed and ignored marks stay.
+          </Text>
+          <View style={styles.confirmActions}>
+            <Pressable
+              accessibilityRole="button"
+              disabled={clearing}
+              onPress={confirmClearComments}
+            >
+              <Text style={styles.confirmDanger}>{clearing ? "Clearing…" : "Clear comments"}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              disabled={clearing}
+              onPress={() => setConfirmClear(false)}
+            >
+              <Text style={styles.confirmCancel}>Cancel</Text>
+            </Pressable>
+          </View>
+        </Modal.Content>
+      </Modal>
       <SendSheet
         open={review.sendOpen}
         onOpenChange={review.setSendOpen}

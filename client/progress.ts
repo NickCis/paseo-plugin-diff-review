@@ -63,6 +63,46 @@ export function withUpdatedFile(input: {
   };
 }
 
+export function workspaceHasComments(progress: Record<string, FileProgress>): boolean {
+  return Object.values(progress).some(
+    (file) =>
+      Boolean(file.fileComment?.trim()) ||
+      file.lineComments.some((comment) => comment.body.trim()),
+  );
+}
+
+/** Remove file and line comments. Viewed and ignored marks stay. */
+export function clearWorkspaceComments(
+  values: ReviewSettingsValues,
+  workspaceId: string,
+): ReviewSettingsValues {
+  const workspace = values.progressByWorkspace[workspaceId];
+  if (!workspace) return values;
+  let changed = false;
+  const files: Record<string, FileProgress> = {};
+  for (const [pathKey, progress] of Object.entries(workspace.files)) {
+    const hasComment =
+      Boolean(progress.fileComment?.trim()) ||
+      progress.lineComments.some((comment) => comment.body.trim());
+    if (!hasComment) {
+      files[pathKey] = progress;
+      continue;
+    }
+    changed = true;
+    const next: FileProgress = { ...progress, lineComments: [] };
+    delete next.fileComment;
+    files[pathKey] = next;
+  }
+  if (!changed) return values;
+  return {
+    ...values,
+    progressByWorkspace: {
+      ...values.progressByWorkspace,
+      [workspaceId]: { files },
+    },
+  };
+}
+
 /** Drop progress entries for paths that are no longer in the snapshot. */
 export function pruneWorkspaceProgress(
   values: ReviewSettingsValues,

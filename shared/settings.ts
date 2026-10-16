@@ -1,7 +1,7 @@
 import { defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
 
-export const DEFAULT_PROMPT_TEMPLATE = `Review the following unstaged changes in {{workspace}}.
+export const DEFAULT_PROMPT_TEMPLATE = `Review the following changes in {{workspace}}.
 
 ## Comments
 {{comments}}
@@ -11,8 +11,18 @@ export const DEFAULT_PROMPT_TEMPLATE = `Review the following unstaged changes in
 
 Please summarize risks, suggest follow-ups, and call out anything that should not be staged yet.`;
 
-/** Previous default. Stored templates equal to it are upgraded to the current default on read. */
-const LEGACY_DEFAULT_PROMPT_TEMPLATE = `Review the following unstaged changes in {{workspace}}.
+/** Previous defaults. Stored templates equal to one of these are upgraded on read. */
+const LEGACY_DEFAULT_PROMPT_TEMPLATES = new Set([
+  `Review the following unstaged changes in {{workspace}}.
+
+## Comments
+{{comments}}
+
+## General comment
+{{reviewComment}}
+
+Please summarize risks, suggest follow-ups, and call out anything that should not be staged yet.`,
+  `Review the following unstaged changes in {{workspace}}.
 
 Files reviewed (seen): {{seenCount}} / {{totalCount}}
 Ignored: {{ignoredCount}}
@@ -23,7 +33,8 @@ Ignored: {{ignoredCount}}
 ## Seen files without comments (will be staged after send)
 {{seenUncommented}}
 
-Please summarize risks, suggest follow-ups, and call out anything that should not be staged yet.`;
+Please summarize risks, suggest follow-ups, and call out anything that should not be staged yet.`,
+]);
 
 export const DEFAULT_DIFF_FONT_SIZE = 12;
 export const DEFAULT_DIFF_LINE_HEIGHT = 18;
@@ -61,7 +72,7 @@ export const reviewSettings = defineSettings({
       .string()
       .default(DEFAULT_PROMPT_TEMPLATE)
       .transform((value) =>
-        value === LEGACY_DEFAULT_PROMPT_TEMPLATE ? DEFAULT_PROMPT_TEMPLATE : value,
+        LEGACY_DEFAULT_PROMPT_TEMPLATES.has(value) ? DEFAULT_PROMPT_TEMPLATE : value,
       ),
     progressByWorkspace: z.record(z.string(), WorkspaceProgressSchema).default({}),
     diffTypography: DiffTypographySchema.default({
