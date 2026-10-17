@@ -95,9 +95,10 @@ function PromptEditor({
           style={styles.input}
         />
         <Text style={styles.help}>
-          Placeholders: {"{{workspace}}"}, {"{{comments}}"} (numbered, anchored to file:line),{" "}
-          {"{{reviewComment}}"} (the note from the send dialog). Legacy: {"{{seenCount}}"},{" "}
-          {"{{totalCount}}"}, {"{{ignoredCount}}"}, {"{{seenUncommented}}"}, {"{{seenFiles}}"}
+          Placeholders: {"{{comments}}"} (numbered file:lines comments), {"{{reviewComment}}"} (the
+          note from the send dialog; omitted when empty), {"{{workspace}}"}. Legacy:{" "}
+          {"{{seenCount}}"}, {"{{totalCount}}"}, {"{{ignoredCount}}"}, {"{{seenUncommented}}"},{" "}
+          {"{{seenFiles}}"}
         </Text>
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <SettingsAction

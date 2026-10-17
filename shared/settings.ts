@@ -1,7 +1,22 @@
 import { defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
 
-export const DEFAULT_PROMPT_TEMPLATE = `Review the following changes in {{workspace}}.
+export const DEFAULT_PROMPT_TEMPLATE = `I reviewed your code and have the following comments. Please address them.
+
+{{reviewComment}}
+
+{{comments}}`;
+
+/** Previous defaults. Stored templates equal to one of these are upgraded on read. */
+const LEGACY_DEFAULT_PROMPT_TEMPLATES = new Set([
+  `Review the following changes in {{workspace}}.
+
+## Comments
+{{comments}}
+
+## General comment
+{{reviewComment}}`,
+  `Review the following changes in {{workspace}}.
 
 ## Comments
 {{comments}}
@@ -9,10 +24,7 @@ export const DEFAULT_PROMPT_TEMPLATE = `Review the following changes in {{worksp
 ## General comment
 {{reviewComment}}
 
-Please summarize risks, suggest follow-ups, and call out anything that should not be staged yet.`;
-
-/** Previous defaults. Stored templates equal to one of these are upgraded on read. */
-const LEGACY_DEFAULT_PROMPT_TEMPLATES = new Set([
+Please summarize risks, suggest follow-ups, and call out anything that should not be staged yet.`,
   `Review the following unstaged changes in {{workspace}}.
 
 ## Comments

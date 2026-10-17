@@ -3,9 +3,11 @@ import type { FileProgress, LineComment, ReviewSettingsValues } from "./settings
 
 type FileEntry = { pathKey: string; progress: FileProgress };
 
-/** Drops a `## General comment` heading whose body was left blank. */
+/** Drops an empty general-comment block, including a leftover `## General comment` heading. */
 function omitEmptyGeneralComment(prompt: string): string {
-  return prompt.replace(/(^|\n)## General comment[ \t]*(?:\r?\n)+/g, "$1");
+  return prompt
+    .replace(/(^|\n)## General comment[ \t]*(?:\r?\n)+/g, "$1")
+    .replace(/(Please address them\.)\n{3,}/, "$1\n\n");
 }
 
 function bulletList(files: readonly FileEntry[]): string {
@@ -28,7 +30,7 @@ function formatComments(files: readonly FileEntry[]): string[] {
     const path = displayPathForKey(file.pathKey);
     const note = file.progress.fileComment?.trim();
     const items: Array<{ anchor: string; body: string }> = [];
-    if (note) items.push({ anchor: `\`${path}\` (file note)`, body: note });
+    if (note) items.push({ anchor: `\`${path}\``, body: note });
     for (const comment of file.progress.lineComments) {
       const body = comment.body.trim();
       if (!body) continue;
@@ -62,7 +64,7 @@ export function expandPromptTemplate(input: {
   const reviewComment = input.reviewComment.trim();
   const values: Record<string, string> = {
     workspace: input.workspaceName,
-    comments: comments.length > 0 ? comments.join("\n") : "_No comments._",
+    comments: comments.join("\n"),
     reviewComment,
     // Legacy placeholders, still supported for templates saved by earlier versions.
     seenCount: String(seen.length),
