@@ -21,7 +21,9 @@ import {
   composerKeyProps,
   isEditableTarget,
   nextReviewKey,
+  reviewModifierAction,
   webDocument,
+  type ReviewKeyAction,
   type WebKeyEvent,
 } from "./keyboard";
 import { commentKey } from "./progress";
@@ -124,7 +126,7 @@ function rangeBetween(
 const IDLE_MARK = { cursor: false, selected: false };
 
 type LineMark = { cursor: boolean; selected: boolean };
-type ScrollAlign = "nearest" | "start" | "end";
+type ScrollAlign = "nearest" | "start" | "end" | "pin";
 
 /**
  * Line marker kept outside React state. A j/k repeat must not re-render the file:
@@ -134,6 +136,8 @@ class LineCursorStore {
   cursorId: string | null = null;
   visualAnchorId: string | null = null;
   scrollAlign: ScrollAlign = "nearest";
+  /** Viewport offset, in px, used when `scrollAlign` is `pin`. */
+  scrollPin = 0;
   scrollSeq = 0;
   lines: readonly DisplayLine[] = [];
   selectableIds: string[] = [];
@@ -214,6 +218,7 @@ class LineCursorStore {
     this.selected = new Set();
     this.marks.clear();
     this.scrollAlign = "nearest";
+    this.scrollPin = 0;
     if (dirty) this.emitAll();
   }
 
@@ -236,6 +241,12 @@ class LineCursorStore {
     if (ids.length === 0) return;
     const id = edge === "start" ? ids[0]! : ids[ids.length - 1]!;
     this.commitCursor(id, edge);
+  }
+
+  /** Moves the marker to `id` and keeps it `pin` pixels below the viewport top. */
+  placePinned(id: string, pin: number) {
+    this.scrollPin = pin;
+    this.commitCursor(id, "pin");
   }
 
   focusLine(id: string) {
@@ -373,7 +384,7 @@ function findVerticalScroller(el: ScrollEl): ScrollEl | null {
 }
 
 /** Scrolls one row inside the diff pane. Skips the layout read when it is already visible. */
-function scrollLineIntoView(node: object, align: ScrollAlign) {
+function scrollLineIntoView(node: object, align: ScrollAlign, pin = 0) {
   const el = node as ScrollEl;
   if (typeof el.getBoundingClientRect !== "function") return;
   const scroller = findVerticalScroller(el);
@@ -382,18 +393,77 @@ function scrollLineIntoView(node: object, align: ScrollAlign) {
     typeof scroller.getBoundingClientRect !== "function" ||
     typeof scroller.scrollTop !== "number"
   ) {
-    el.scrollIntoView?.({ block: align });
+    if (align !== "pin") el.scrollIntoView?.({ block: align });
     return;
   }
   const row = el.getBoundingClientRect();
   const view = scroller.getBoundingClientRect();
   if (align === "nearest" && row.top >= view.top && row.bottom <= view.bottom) return;
   let delta = 0;
-  if (align === "start") delta = row.top - view.top;
+  if (align === "pin") delta = row.top - view.top - pin;
+  else if (align === "start") delta = row.top - view.top;
   else if (align === "end") delta = row.bottom - view.bottom;
   else if (row.top < view.top) delta = row.top - view.top;
   else delta = row.bottom - view.bottom;
   scroller.scrollTop += delta;
+}
+
+/** Lines to jump when the diff pane has not been measured yet. */
+const PAGE_FALLBACK_LINES = 20;
+
+/**
+ * Pages the line marker by about one viewport, keeping two lines of overlap
+ * and the marker's place on screen (vim Ctrl-F / Ctrl-B).
+ */
+function pageCursor(
+  store: LineCursorStore,
+  rowNodes: Map<string, RowNode>,
+  direction: 1 | -1,
+) {
+  const ids = store.selectableIds;
+  if (ids.length === 0) return;
+  const currentId = store.currentId();
+  if (!currentId) return;
+  const start = ids.indexOf(currentId);
+  const from = start < 0 ? 0 : start;
+  const fallback = () => {
+    store.move(direction * Math.min(PAGE_FALLBACK_LINES, ids.length - 1));
+  };
+
+  const node = rowNodes.get(ids[from]!) as ScrollEl | undefined;
+  if (!node || typeof node.getBoundingClientRect !== "function") {
+    fallback();
+    return;
+  }
+  const scroller = findVerticalScroller(node);
+  if (
+    !scroller ||
+    typeof scroller.getBoundingClientRect !== "function" ||
+    typeof scroller.clientHeight !== "number"
+  ) {
+    fallback();
+    return;
+  }
+  const row = node.getBoundingClientRect();
+  const view = scroller.getBoundingClientRect();
+  const lineHeight = Math.max(1, row.bottom - row.top);
+  const viewHeight = scroller.clientHeight > 0 ? scroller.clientHeight : view.bottom - view.top;
+  if (viewHeight <= 0) {
+    fallback();
+    return;
+  }
+  const overlap = Math.min(lineHeight * 2, viewHeight / 2);
+  const pagePx = Math.max(lineHeight, viewHeight - overlap);
+  const pin = Math.min(Math.max(0, row.top - view.top), Math.max(0, viewHeight - lineHeight));
+
+  let next = from;
+  for (let step = from + direction; step >= 0 && step < ids.length; step += direction) {
+    const candidate = rowNodes.get(ids[step]!) as ScrollEl | undefined;
+    if (!candidate || typeof candidate.getBoundingClientRect !== "function") break;
+    next = step;
+    if (Math.abs(candidate.getBoundingClientRect().top - row.top) >= pagePx) break;
+  }
+  store.placePinned(ids[next]!, pin);
 }
 
 function CursorFollow({
@@ -413,7 +483,7 @@ function CursorFollow({
     const id = store.cursorId;
     if (!id) return;
     const node = rowNodes.current.get(id);
-    if (node) scrollLineIntoView(node, store.scrollAlign);
+    if (node) scrollLineIntoView(node, store.scrollAlign, store.scrollPin);
   }, [rowNodes, seq, store]);
   return null;
 }
@@ -1101,34 +1171,16 @@ export function DiffView({
     return callback;
   }, []);
 
-  // Returns true when the key was handled (the caller then prevents default).
-  const handleKey = (key: string | undefined): boolean => {
-    const parsed = nextReviewKey(pendingKeyRef.current, key);
-    pendingKeyRef.current = parsed.pending;
-    const action = parsed.action;
-    if (action === "escape") {
-      if (cursorStore.visualAnchorId) {
-        cursorStore.clearVisual();
-        return true;
-      }
-      if (draft) {
-        cancelDraft();
-        return true;
-      }
-      return false;
-    }
-    // Composers own the keyboard while open, so shortcuts must not fire through them.
-    if (!keyboardEnabled || draft || editingKey || fileCommentOpen) {
-      pendingKeyRef.current = null;
-      return false;
-    }
-    if (!action) return parsed.pending === "g";
-
+  const runAction = (action: ReviewKeyAction): boolean => {
     cursorStore.syncLines(lines);
     switch (action) {
       case "cursorDown":
       case "cursorUp":
         cursorStore.move(action === "cursorDown" ? 1 : -1);
+        return true;
+      case "pageDown":
+      case "pageUp":
+        pageCursor(cursorStore, rowNodes.current, action === "pageDown" ? 1 : -1);
         return true;
       case "cursorTop":
         cursorStore.jump("start");
@@ -1164,8 +1216,40 @@ export function DiffView({
       case "ignore":
         onIgnore();
         return true;
+      case "escape":
+        return false;
     }
-    return false;
+  };
+
+  // Returns true when the key was handled (the caller then prevents default).
+  // `chord` is a modifier shortcut (Ctrl+F / Ctrl+B) already resolved by the caller.
+  const handleKey = (key: string | undefined, chord: ReviewKeyAction | null = null): boolean => {
+    if (chord) {
+      pendingKeyRef.current = null;
+      if (!keyboardEnabled || draft || editingKey || fileCommentOpen) return false;
+      return runAction(chord);
+    }
+    const parsed = nextReviewKey(pendingKeyRef.current, key);
+    pendingKeyRef.current = parsed.pending;
+    const action = parsed.action;
+    if (action === "escape") {
+      if (cursorStore.visualAnchorId) {
+        cursorStore.clearVisual();
+        return true;
+      }
+      if (draft) {
+        cancelDraft();
+        return true;
+      }
+      return false;
+    }
+    // Composers own the keyboard while open, so shortcuts must not fire through them.
+    if (!keyboardEnabled || draft || editingKey || fileCommentOpen) {
+      pendingKeyRef.current = null;
+      return false;
+    }
+    if (!action) return parsed.pending === "g";
+    return runAction(action);
   };
   // Keydown listener is attached once; it always calls the latest handler.
   const handleKeyRef = useRef(handleKey);
@@ -1176,11 +1260,16 @@ export function DiffView({
     const doc = webDocument();
     if (!doc) return;
     const onKeyDown = (event: WebKeyEvent) => {
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (isEditableTarget(event.target)) {
         pendingKeyRef.current = null;
         return;
       }
+      const chord = reviewModifierAction(event);
+      if (chord) {
+        if (handleKeyRef.current(undefined, chord)) event.preventDefault?.();
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (handleKeyRef.current(event.key)) event.preventDefault?.();
     };
     doc.addEventListener("keydown", onKeyDown);
@@ -1266,7 +1355,7 @@ export function DiffView({
         ) : null}
         <Text style={styles.muted}>
           {platform === "web"
-            ? "Click or drag to comment. Keys: j/k move · gg/G top/bottom · c comment line · v, j/k, c comment a range · C file note · r viewed · i ignore"
+            ? "Click or drag to comment. Keys: j/k move · Ctrl+F/Ctrl+B page · gg/G top/bottom · c comment line · v, j/k, c comment a range · C file note · r viewed · i ignore"
             : "Tap a line to comment; tap another to set a range. Tap outside the range (empty draft) to start over."}
         </Text>
 

@@ -20,6 +20,8 @@ export type WebDocument = {
 export type ReviewKeyAction =
   | "cursorDown"
   | "cursorUp"
+  | "pageDown"
+  | "pageUp"
   | "cursorTop"
   | "cursorBottom"
   | "toggleVisual"
@@ -73,6 +75,18 @@ export function composerKeyProps(handlers: {
       }
     },
   };
+}
+
+/**
+ * Ctrl+F / Ctrl+B page the diff (vim). Other modifier chords are ignored.
+ * Plain `f` and `b` are not shortcuts.
+ */
+export function reviewModifierAction(event: WebKeyEvent): ReviewKeyAction | null {
+  if (!event.ctrlKey || event.metaKey || event.altKey) return null;
+  const key = keyOf(event)?.toLowerCase();
+  if (key === "f") return "pageDown";
+  if (key === "b") return "pageUp";
+  return null;
 }
 
 /** Maps a diff-review shortcut key to its action. Modifier combos are filtered by the caller. */
