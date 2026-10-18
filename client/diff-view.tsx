@@ -8,18 +8,25 @@ import {
   type ComponentRef,
 } from "react";
 import { Pressable, Text, View } from "react-native";
-import { useRpc, type PluginSurfaceProps } from "@getpaseo/plugin/client";
-import { ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
+import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { ScrollView, useToast } from "@getpaseo/plugin/client/react-native";
 import { diffPalette } from "./colors";
-import { type DisplayLine, buildDisplay, gapsByBeforeId } from "./diff-display";
+import type { DisplayLine } from "./diff-display";
 import { DiffLineRow } from "./diff-line-row";
-import { expandAxis, lineInRange, lineNumberForSide, lineSide } from "./diff-line-utils";
-import { diffCommentBoxStyle } from "./diff-comment-layout";
-import { ExpandButton } from "./expand-button";
+import {
+  commentsAfterLine,
+  draftSelectionRange,
+  isDraftComposerLine,
+  lineInRange,
+  lineNumberForSide,
+  lineSide,
+} from "./diff-line-utils";
+import { ExpandGapButton } from "./expand-gap-button";
+import { LineDraftBox, type LineDraftRange } from "./line-draft-box";
+import { diffViewFrameStyles, diffViewStatusMessage } from "./diff-view-layout";
 import { FileHeader } from "./file-header";
 import { InlineCommentCard } from "./inline-comment";
 import {
-  composerKeyProps,
   isEditableTarget,
   nextReviewKey,
   reviewModifierAction,
@@ -28,10 +35,11 @@ import {
   type WebKeyEvent,
 } from "./keyboard";
 import { commentKey } from "./progress";
-import { diffContextRpc, type DiffFile, type DiffHunk, type DiffLine } from "../shared/rpc";
+import { type DiffFile, type DiffHunk, type DiffLine } from "../shared/rpc";
 import type { DiffTypography, FileProgress, LineComment } from "../shared/settings";
 import { NativeDiffView } from "./diff-view-native";
 import type { DiffViewProps } from "./diff-view-props";
+import { useDiffExpand } from "./use-diff-expand";
 import { useScrollComposerIntoView } from "./use-scroll-composer-into-view";
 
 type Theme = PluginSurfaceProps["theme"];
@@ -453,8 +461,6 @@ function CursorFollow({
   return null;
 }
 
-type DraftRange = { side: "old" | "new"; startLine: number; endLine: number };
-
 function WebDiffLineRow({
   line,
   theme,
@@ -509,123 +515,6 @@ function WebDiffLineRow({
   );
 }
 
-/**
- * New-comment composer. Text stays in this component so typing does not re-render the file.
- * `bodyRef` lets the parent see whether the draft is empty without storing the text in state.
- */
-function LineDraftBox({
-  range,
-  bodyRef,
-  theme,
-  onSave,
-  onCancel,
-}: {
-  range: DraftRange;
-  bodyRef: { current: string };
-  theme: Theme;
-  onSave(body: string): Promise<void>;
-  onCancel(): void;
-}) {
-  const [body, setBody] = useState(() => bodyRef.current);
-  const [saving, setSaving] = useState(false);
-  const onChange = useCallback(
-    (text: string) => {
-      bodyRef.current = text;
-      setBody(text);
-    },
-    [bodyRef],
-  );
-  const save = useCallback(() => {
-    if (saving || !bodyRef.current.trim()) return;
-    setSaving(true);
-    void onSave(bodyRef.current).finally(() => setSaving(false));
-  }, [bodyRef, onSave, saving]);
-  const keyProps = useMemo(
-    () => composerKeyProps({ onSave: save, onCancel }),
-    [onCancel, save],
-  );
-  const styles = useMemo(
-    () => ({
-      box: {
-        ...diffCommentBoxStyle,
-        padding: 10,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: theme.colors.accent,
-        backgroundColor: theme.colors.surface1,
-        gap: 8,
-      },
-      muted: { color: theme.colors.foregroundMuted, fontSize: 13 },
-      input: {
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-        borderRadius: 6,
-        padding: 10,
-        color: theme.colors.foreground,
-        minHeight: 64,
-        textAlignVertical: "top" as const,
-      },
-      actions: {
-        flexDirection: "row" as const,
-        alignItems: "center" as const,
-        gap: 12,
-        flexWrap: "wrap" as const,
-      },
-      button: {
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 6,
-        backgroundColor: theme.colors.accent,
-        justifyContent: "center" as const,
-      },
-      buttonText: { color: theme.colors.accentForeground, fontWeight: "600" as const },
-      cancelButton: {
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        justifyContent: "center" as const,
-      },
-      action: { color: theme.colors.accent, fontSize: 12, fontWeight: "600" as const },
-      hint: { color: theme.colors.foregroundMuted, fontSize: 11, marginLeft: "auto" as const },
-    }),
-    [theme],
-  );
-  const lo = Math.min(range.startLine, range.endLine);
-  const hi = Math.max(range.startLine, range.endLine);
-
-  return (
-    <View style={styles.box}>
-      <Text style={styles.muted}>
-        Comment on {range.side} L{lo}
-        {lo !== hi ? `–${hi}` : ""}
-      </Text>
-      <TextInput
-        multiline
-        value={body}
-        onChangeText={onChange}
-        placeholder="Line comment"
-        placeholderTextColor={theme.colors.foregroundMuted}
-        style={styles.input}
-        autoFocus
-        {...keyProps}
-      />
-      <View style={styles.actions}>
-        <Pressable
-          accessibilityRole="button"
-          onPress={save}
-          style={styles.button}
-          disabled={saving}
-        >
-          <Text style={styles.buttonText}>{saving ? "Saving…" : "Save comment"}</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" onPress={onCancel} style={styles.cancelButton}>
-          <Text style={styles.action}>Cancel</Text>
-        </Pressable>
-        <Text style={styles.hint}>Ctrl+Enter to save</Text>
-      </View>
-    </View>
-  );
-}
-
 export function DiffView(props: DiffViewProps) {
   if (props.platform !== "web") {
     return <NativeDiffView {...props} />;
@@ -657,19 +546,20 @@ function WebDiffView({
   onSaveLineComment,
   onDeleteLineComment,
 }: DiffViewProps) {
-  const loadContext = useRpc(diffContextRpc);
   const toast = useToast();
   const palette = useMemo(() => diffPalette(theme), [theme]);
-  const axis = expandAxis(file);
-  const [expanded, setExpanded] = useState<Map<string, DisplayLine[]>>(() => new Map());
-  const [expandingKey, setExpandingKey] = useState<string | null>(null);
-  const [totalLines, setTotalLines] = useState<number | null>(null);
+  const { lines, gapByBefore, totalLines, expandingKey, onExpand } = useDiffExpand({
+    cwd,
+    pathKey,
+    file,
+    hunks,
+  });
   const dragging = useRef<{
     side: "old" | "new";
     startLine: number;
     moved: boolean;
   } | null>(null);
-  const [draft, setDraft] = useState<DraftRange | null>(null);
+  const [draft, setDraft] = useState<LineDraftRange | null>(null);
   const draftBodyRef = useRef("");
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -699,8 +589,6 @@ function WebDiffView({
   const pendingKeyRef = useRef<"g" | null>(null);
 
   useEffect(() => {
-    setExpanded(new Map());
-    setTotalLines(null);
     setDraft(null);
     draftBodyRef.current = "";
     setEditingKey(null);
@@ -712,76 +600,13 @@ function WebDiffView({
     dragging.current = null;
   }, [cursorStore, pathKey]);
 
-  const { lines, gaps } = useMemo(
-    () => buildDisplay(hunks, expanded, totalLines, axis),
-    [axis, expanded, hunks, totalLines],
-  );
-  const gapByBefore = useMemo(() => gapsByBeforeId(gaps), [gaps]);
-
   useLayoutEffect(() => {
     cursorStore.syncLines(lines);
   }, [cursorStore, lines]);
 
   const styles = useMemo(
-    () => ({
-      root: {
-        flex: 1,
-        minHeight: 0,
-        gap: 0,
-        alignSelf: "stretch" as const,
-        width: "100%" as const,
-      },
-      scroll: { flex: 1, minHeight: 0 },
-      scrollContent: {
-        gap: 12,
-        paddingTop: 12,
-        paddingBottom: composerActive ? 280 : 24,
-      },
-      muted: { color: theme.colors.foregroundMuted, fontSize: 13 },
-      error: { color: theme.colors.statusDanger, fontSize: 13 },
-      hunk: {
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-        borderRadius: 6,
-        overflow: "hidden" as const,
-        alignSelf: "stretch" as const,
-        width: "100%" as const,
-      },
-    }),
+    () => diffViewFrameStyles(theme, composerActive),
     [composerActive, theme],
-  );
-
-  const onExpand = useCallback(
-    async (_gapId: string, startLine: number, endLine: number, side: "old" | "new") => {
-      const key = `${startLine}:${endLine}`;
-      setExpandingKey(key);
-      try {
-        const result = await loadContext({ cwd, pathKey, side, startLine, endLine });
-        if (result.status !== "ok") {
-          toast.error(result.error ?? "Could not expand context");
-          return;
-        }
-        setTotalLines(result.totalLines);
-        const block: DisplayLine[] = result.lines.map((line, index) => ({
-          id: `x:${side}:${line.oldLineNumber ?? line.newLineNumber ?? index}`,
-          type: "context" as const,
-          content: line.content,
-          oldLineNumber: line.oldLineNumber,
-          newLineNumber: line.newLineNumber,
-          source: "expand" as const,
-        }));
-        setExpanded((current) => {
-          const next = new Map(current);
-          next.set(key, block);
-          return next;
-        });
-      } catch (expandError) {
-        toast.error(expandError instanceof Error ? expandError.message : String(expandError));
-      } finally {
-        setExpandingKey(null);
-      }
-    },
-    [cwd, loadContext, pathKey, toast],
   );
 
   const onDragStartLine = useCallback(
@@ -908,18 +733,6 @@ function WebDiffView({
       else toast.error("Could not delete comment");
     },
     [onDeleteLineComment, toast],
-  );
-
-  const commentsAfterLine = useCallback(
-    (line: DisplayLine): LineComment[] => {
-      const matched: LineComment[] = [];
-      for (const comment of progress.lineComments) {
-        const number = comment.side === "new" ? line.newLineNumber : line.oldLineNumber;
-        if (number === comment.endLine) matched.push(comment);
-      }
-      return matched;
-    },
-    [progress.lineComments],
   );
 
   const openComposer = useCallback(
@@ -1074,59 +887,18 @@ function WebDiffView({
     />
   );
 
-  if (status === "loading") {
+  if (status !== "ok") {
     return (
       <View style={styles.root}>
         {header}
-        <Text style={[styles.muted, { marginTop: 12 }]}>Loading diff…</Text>
-      </View>
-    );
-  }
-  if (status === "binary") {
-    return (
-      <View style={styles.root}>
-        {header}
-        <Text style={[styles.muted, { marginTop: 12 }]}>Binary file</Text>
-      </View>
-    );
-  }
-  if (status === "too_large") {
-    return (
-      <View style={styles.root}>
-        {header}
-        <Text style={[styles.muted, { marginTop: 12 }]}>Diff too large to display</Text>
-      </View>
-    );
-  }
-  if (status === "missing") {
-    return (
-      <View style={styles.root}>
-        {header}
-        <Text style={[styles.muted, { marginTop: 12 }]}>{error ?? "File unavailable"}</Text>
+        <Text style={[styles.muted, { marginTop: 12 }]}>
+          {diffViewStatusMessage(status, error)}
+        </Text>
       </View>
     );
   }
 
-  const selectionRange: LineRange | null = draft
-    ? {
-        side: draft.side,
-        startLine: Math.min(draft.startLine, draft.endLine),
-        endLine: Math.max(draft.startLine, draft.endLine),
-      }
-    : null;
-
-  const renderGap = (gap: (typeof gaps)[number]) => (
-    <ExpandButton
-      key={gap.id}
-      gapId={gap.id}
-      startLine={gap.startLine}
-      endLine={gap.endLine}
-      totalLines={totalLines}
-      expanding={expandingKey === `${gap.startLine}:${gap.endLine}`}
-      theme={theme}
-      onExpand={(gapId, start, end) => void onExpand(gapId, start, end, gap.side)}
-    />
-  );
+  const selectionRange = draftSelectionRange(draft);
 
   return (
     <View style={styles.root}>
@@ -1151,13 +923,20 @@ function WebDiffView({
         </Text>
 
         <View style={styles.hunk}>
-          {(gapByBefore.get(null) ?? []).map(renderGap)}
+          {(gapByBefore.get(null) ?? []).map((gap) => (
+            <ExpandGapButton
+              key={gap.id}
+              gap={gap}
+              totalLines={totalLines}
+              expandingKey={expandingKey}
+              theme={theme}
+              onExpand={onExpand}
+            />
+          ))}
           {lines.map((line) => {
             const selected = selectionRange ? lineInRange(line, selectionRange) : false;
-            const comments = commentsAfterLine(line);
-            const draftHere =
-              draft &&
-              lineNumberForSide(line, draft.side) === Math.max(draft.startLine, draft.endLine);
+            const comments = commentsAfterLine(line, progress.lineComments);
+            const draftHere = draft != null && isDraftComposerLine(line, draft);
             return (
               <View key={line.id}>
                 <WebDiffLineRow
@@ -1201,12 +980,22 @@ function WebDiffView({
                       range={draft}
                       bodyRef={draftBodyRef}
                       theme={theme}
+                      showKeyboardHint
                       onSave={saveDraft}
                       onCancel={cancelDraft}
                     />
                   </View>
                 ) : null}
-                {(gapByBefore.get(line.id) ?? []).map(renderGap)}
+                {(gapByBefore.get(line.id) ?? []).map((gap) => (
+                  <ExpandGapButton
+                    key={gap.id}
+                    gap={gap}
+                    totalLines={totalLines}
+                    expandingKey={expandingKey}
+                    theme={theme}
+                    onExpand={onExpand}
+                  />
+                ))}
               </View>
             );
           })}
