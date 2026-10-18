@@ -1,4 +1,5 @@
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { extendedThemeColors } from "./theme-colors";
 
 type Theme = PluginSurfaceProps["theme"];
 
@@ -13,12 +14,14 @@ export function withAlpha(hex: string, alpha: number): string {
   return `${normalized}${byte}`;
 }
 
+/** Match Paseo's built-in diff palette (appearance diff colors + status tints). */
 export function diffPalette(theme: Theme) {
+  const colors = extendedThemeColors(theme);
   return {
-    addFg: theme.colors.statusSuccess,
-    delFg: theme.colors.statusDanger,
-    addBg: withAlpha(theme.colors.statusSuccess, 0.15),
-    delBg: withAlpha(theme.colors.statusDanger, 0.15),
-    selectBg: withAlpha(theme.colors.accent, 0.22),
+    addFg: colors.diffAddition,
+    delFg: colors.diffDeletion,
+    addBg: withAlpha(colors.diffAddition, 0.15),
+    delBg: withAlpha(colors.diffDeletion, 0.1),
+    selectBg: withAlpha(colors.accent, 0.22),
   };
 }

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Text } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { highlightLine, roleColor, type HighlightSpan } from "./highlight";
+import { extendedThemeColors } from "./theme-colors";
 import type { DiffTypography } from "../shared/settings";
 
 type Theme = PluginSurfaceProps["theme"];
@@ -15,7 +16,8 @@ function Span({
   baseColor: string;
   theme: Theme;
 }) {
-  const color = span.role === "plain" ? baseColor : roleColor(span.role, theme.colors);
+  const color =
+    span.role === "plain" ? baseColor : roleColor(span.role, extendedThemeColors(theme));
   const style = useMemo(() => ({ color }), [color]);
   return <Text style={style}>{span.text}</Text>;
 }

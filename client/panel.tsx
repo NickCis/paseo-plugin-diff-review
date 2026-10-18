@@ -4,6 +4,7 @@ import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
 import { Icon, Modal, ScrollView, useToast } from "@getpaseo/plugin/client/react-native";
 import { DiffView } from "./diff-view";
 import { FileList } from "./file-list";
+import { FileListDrawer } from "./file-list-drawer";
 import { SendSheet } from "./send-sheet";
 import { useDiffReview } from "./use-diff-review";
 import { displayPathForKey, parsePathKey } from "../shared/paths";
@@ -59,10 +60,16 @@ export function DiffReviewPanel({
     return discardFile(selectedPathKey);
   }, [discardFile, selectedPathKey]);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [fileListOpen, setFileListOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   const toggleMenu = useCallback(() => setMenuOpen((open) => !open), []);
+  const openFileList = useCallback(() => {
+    setMenuOpen(false);
+    setFileListOpen(true);
+  }, []);
+  const closeFileList = useCallback(() => setFileListOpen(false), []);
   const askClearComments = useCallback(() => {
     setMenuOpen(false);
     setConfirmClear(true);
@@ -120,8 +127,26 @@ export function DiffReviewPanel({
       },
       title: {
         color: theme.colors.foreground,
-        fontSize: layout.compact ? 18 : 20,
+        fontSize: layout.compact ? 16 : 20,
         fontWeight: "600" as const,
+      },
+      iconButton: {
+        width: 36,
+        height: 36,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        backgroundColor: theme.colors.surface1,
+        alignItems: "center" as const,
+        justifyContent: "center" as const,
+      },
+      iconButtonPrimary: {
+        width: 36,
+        height: 36,
+        borderRadius: 8,
+        backgroundColor: theme.colors.accent,
+        alignItems: "center" as const,
+        justifyContent: "center" as const,
       },
       muted: { color: theme.colors.foregroundMuted, fontSize: 13 },
       actions: { flexDirection: "row" as const, gap: 8, flexWrap: "wrap" as const },
@@ -170,6 +195,7 @@ export function DiffReviewPanel({
         shadowOffset: { width: 0, height: 6 },
       },
       menuItem: { paddingVertical: 10, paddingHorizontal: 12 },
+      menuText: { color: theme.colors.foreground, fontSize: 13, fontWeight: "500" as const },
       menuDanger: { color: theme.colors.statusDanger, fontSize: 13, fontWeight: "500" as const },
       menuMuted: { color: theme.colors.foregroundMuted, fontSize: 11, marginTop: 2 },
       confirmBody: { color: theme.colors.foreground, fontSize: 14 },
@@ -184,9 +210,7 @@ export function DiffReviewPanel({
       body: layout.compact
         ? { flex: 1, minHeight: 0, gap: 12 }
         : { flex: 1, minHeight: 0, flexDirection: "row" as const, gap: 16 },
-      listPane: layout.compact
-        ? { maxHeight: "38%" as const, minHeight: 140, gap: 8 }
-        : { width: 280, minWidth: 220, minHeight: 0, gap: 8 },
+      listPane: { width: 280, minWidth: 220, minHeight: 0, gap: 8 },
       detailPane: { flex: 1, minHeight: 0, gap: 8 },
       paneScroll: { flex: 1, minHeight: 0 },
       error: { color: theme.colors.statusDanger, fontSize: 13 },
@@ -225,60 +249,95 @@ export function DiffReviewPanel({
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Diff Review</Text>
-          <Text style={styles.muted}>{workspace.title?.trim() || workspace.name}</Text>
+          {!layout.compact ? (
+            <Text style={styles.muted}>{workspace.title?.trim() || workspace.name}</Text>
+          ) : null}
         </View>
         <View style={styles.actions}>
-          {review.files.length > 0 ? (
-            <View style={styles.menuAnchor}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="More actions"
-                onPress={toggleMenu}
-                style={styles.menuButton}
+          <View style={styles.menuAnchor}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="More actions"
+              onPress={toggleMenu}
+              style={styles.menuButton}
+            >
+              <Icon name="MoreHorizontal" size={16} color={theme.colors.foreground} />
+            </Pressable>
+            {menuOpen ? (
+              <View
+                style={styles.menuPopover}
+                {...(layout.platform === "web"
+                  ? {
+                      onMouseDown: (event: { stopPropagation?: () => void }) => {
+                        event.stopPropagation?.();
+                      },
+                    }
+                  : {})}
               >
-                <Icon name="MoreHorizontal" size={16} color={theme.colors.foreground} />
-              </Pressable>
-              {menuOpen ? (
-                <View
-                  style={styles.menuPopover}
-                  {...(layout.platform === "web"
-                    ? {
-                        onMouseDown: (event: { stopPropagation?: () => void }) => {
-                          event.stopPropagation?.();
-                        },
-                      }
-                    : {})}
-                >
+                {layout.compact ? (
                   <Pressable
                     accessibilityRole="button"
-                    disabled={!review.hasComments || clearing}
-                    onPress={askClearComments}
+                    onPress={openFileList}
                     style={styles.menuItem}
                   >
-                    <Text style={styles.menuDanger}>Clear comments</Text>
-                    {!review.hasComments ? (
-                      <Text style={styles.menuMuted}>No comments to clear</Text>
-                    ) : null}
+                    <Text style={styles.menuText}>Changed files</Text>
+                    <Text style={styles.menuMuted}>
+                      {review.counts.total} file{review.counts.total === 1 ? "" : "s"}
+                    </Text>
                   </Pressable>
-                </View>
-              ) : null}
-            </View>
-          ) : null}
-          <Pressable
-            accessibilityRole="button"
-            onPress={review.onRefreshPress}
-            style={styles.buttonSecondary}
-          >
-            <Text style={styles.buttonSecondaryText}>Refresh</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            disabled={review.files.length === 0 || review.sending}
-            onPress={review.openSend}
-            style={styles.button}
-          >
-            <Text style={styles.buttonText}>Send</Text>
-          </Pressable>
+                ) : null}
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={!review.hasComments || clearing}
+                  onPress={askClearComments}
+                  style={styles.menuItem}
+                >
+                  <Text style={styles.menuDanger}>Clear comments</Text>
+                  {!review.hasComments ? (
+                    <Text style={styles.menuMuted}>No comments to clear</Text>
+                  ) : null}
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
+          {layout.compact ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Refresh diff"
+              onPress={review.onRefreshPress}
+              style={styles.iconButton}
+            >
+              <Icon name="RefreshCw" size={16} color={theme.colors.foreground} />
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              onPress={review.onRefreshPress}
+              style={styles.buttonSecondary}
+            >
+              <Text style={styles.buttonSecondaryText}>Refresh</Text>
+            </Pressable>
+          )}
+          {layout.compact ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Send review"
+              disabled={review.files.length === 0 || review.sending}
+              onPress={review.openSend}
+              style={styles.iconButtonPrimary}
+            >
+              <Icon name="Send" size={16} color={theme.colors.accentForeground} />
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              disabled={review.files.length === 0 || review.sending}
+              onPress={review.openSend}
+              style={styles.button}
+            >
+              <Text style={styles.buttonText}>Send</Text>
+            </Pressable>
+          )}
         </View>
       </View>
       {review.statusMessage ? <Text style={styles.muted}>{review.statusMessage}</Text> : null}
@@ -288,28 +347,30 @@ export function DiffReviewPanel({
         </Pressable>
       ) : null}
       <View style={styles.body}>
-        <View style={styles.listPane}>
-          <Text style={styles.muted}>
-            Viewed {review.counts.seen}/{review.counts.total}
-            {review.counts.ignored > 0 ? ` · ignored ${review.counts.ignored}` : ""}
-          </Text>
-          {review.loadingSnapshot ? <Text style={styles.muted}>Refreshing…</Text> : null}
-          {review.snapshotError ? <Text style={styles.error}>{review.snapshotError}</Text> : null}
-          <ScrollView style={styles.paneScroll}>
-            {review.files.length === 0 && !review.loadingSnapshot ? (
-              <Text style={styles.muted}>No unstaged or untracked changes.</Text>
-            ) : (
-              <FileList
-                files={review.files}
-                progress={review.progress}
-                selectedPathKey={review.selectedPathKey}
-                theme={theme}
-                compact={layout.compact}
-                onSelect={review.selectFile}
-              />
-            )}
-          </ScrollView>
-        </View>
+        {!layout.compact ? (
+          <View style={styles.listPane}>
+            <Text style={styles.muted}>
+              Viewed {review.counts.seen}/{review.counts.total}
+              {review.counts.ignored > 0 ? ` · ignored ${review.counts.ignored}` : ""}
+            </Text>
+            {review.loadingSnapshot ? <Text style={styles.muted}>Refreshing…</Text> : null}
+            {review.snapshotError ? <Text style={styles.error}>{review.snapshotError}</Text> : null}
+            <ScrollView style={styles.paneScroll}>
+              {review.files.length === 0 && !review.loadingSnapshot ? (
+                <Text style={styles.muted}>No unstaged or untracked changes.</Text>
+              ) : (
+                <FileList
+                  files={review.files}
+                  progress={review.progress}
+                  selectedPathKey={review.selectedPathKey}
+                  theme={theme}
+                  compact={layout.compact}
+                  onSelect={review.selectFile}
+                />
+              )}
+            </ScrollView>
+          </View>
+        ) : null}
         <View style={styles.detailPane}>
           {review.selectedPathKey && review.selectedFile && review.cwd ? (
             <DiffView
@@ -380,6 +441,21 @@ export function DiffReviewPanel({
         onIncludeFileListsChange={review.setIncludeFileLists}
         onSend={onSend}
       />
+      {layout.compact ? (
+        <FileListDrawer
+          open={fileListOpen}
+          onClose={closeFileList}
+          theme={theme}
+          compact={layout.compact}
+          files={review.files}
+          progress={review.progress}
+          selectedPathKey={review.selectedPathKey}
+          counts={review.counts}
+          loadingSnapshot={review.loadingSnapshot}
+          snapshotError={review.snapshotError}
+          onSelect={review.selectFile}
+        />
+      ) : null}
     </View>
   );
 }

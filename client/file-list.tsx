@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { extendedThemeColors } from "./theme-colors";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { buildFileTree, flattenTree, type ChangeGlyph, type FlatTreeRow } from "./file-tree";
 import type { DiffFile } from "../shared/rpc";
@@ -21,9 +22,10 @@ function glyphStyle(
   glyph: ChangeGlyph,
   theme: PluginSurfaceProps["theme"],
 ): { symbol: string; color: string } {
-  if (glyph === "add") return { symbol: "+", color: theme.colors.statusSuccess };
-  if (glyph === "del") return { symbol: "−", color: theme.colors.statusDanger };
-  return { symbol: "±", color: theme.colors.foregroundMuted };
+  const colors = extendedThemeColors(theme);
+  if (glyph === "add") return { symbol: "+", color: colors.diffAddition };
+  if (glyph === "del") return { symbol: "−", color: colors.diffDeletion };
+  return { symbol: "±", color: colors.foregroundMuted };
 }
 
 function DirRow({
