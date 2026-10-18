@@ -1,18 +1,34 @@
 import { useEffect, type RefObject } from "react";
+import type { View } from "react-native";
 
 type ScrollRef = {
-  scrollToEnd(options?: { animated?: boolean }): void;
+  scrollTo(options: { x?: number; y?: number; animated?: boolean }): void;
 };
 
+/** Scroll a diff list so an inline composer sits in view (not scroll-to-end). */
 export function useScrollComposerIntoView(
   scrollRef: RefObject<ScrollRef | null>,
-  active: boolean,
+  contentRef: RefObject<View | null>,
+  anchorRef: RefObject<View | null>,
+  activeKey: string | null,
+  offset = 56,
 ) {
   useEffect(() => {
-    if (!active) return;
+    if (!activeKey) return;
     const timer = setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-    }, 120);
+      const anchor = anchorRef.current;
+      const content = contentRef.current;
+      const scroll = scrollRef.current;
+      if (!anchor || !content || !scroll) return;
+
+      anchor.measureLayout(
+        content,
+        (_x, y) => {
+          scroll.scrollTo({ y: Math.max(0, y - offset), animated: true });
+        },
+        () => {},
+      );
+    }, 200);
     return () => clearTimeout(timer);
-  }, [active, scrollRef]);
+  }, [activeKey, anchorRef, contentRef, offset, scrollRef]);
 }

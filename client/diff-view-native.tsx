@@ -137,8 +137,21 @@ export function NativeDiffView({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [fileCommentOpen, setFileCommentOpen] = useState(false);
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
-  const composerActive = draft != null || editingKey != null;
-  useScrollComposerIntoView(scrollRef, composerActive);
+  const contentRef = useRef<View>(null);
+  const composerRef = useRef<View>(null);
+  const assignComposerRef = useCallback((node: View | null) => {
+    composerRef.current = node;
+  }, []);
+  const composerScrollKey = useMemo(() => {
+    if (draft) {
+      const end = Math.max(draft.startLine, draft.endLine);
+      return `draft:${draft.side}:${end}`;
+    }
+    if (editingKey) return `edit:${editingKey}`;
+    return null;
+  }, [draft, editingKey]);
+  const composerActive = composerScrollKey != null;
+  useScrollComposerIntoView(scrollRef, contentRef, composerRef, composerScrollKey);
 
   useEffect(() => {
     setExpanded(new Map());
@@ -343,8 +356,8 @@ export function NativeDiffView({
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
-        automaticallyAdjustKeyboardInsets
       >
+        <View ref={contentRef} collapsable={false}>
         {progress.fileComment ? (
           <Text style={styles.muted} numberOfLines={2}>
             File note: {progress.fileComment}
@@ -380,12 +393,17 @@ export function NativeDiffView({
                 />
                 {comments.map((comment) => {
                   const key = commentKey(comment);
+                  const editing = editingKey === key;
                   return (
-                    <InlineCommentCard
+                    <View
                       key={key}
+                      ref={editing ? assignComposerRef : undefined}
+                      collapsable={false}
+                    >
+                    <InlineCommentCard
                       comment={comment}
                       theme={theme}
-                      editing={editingKey === key}
+                      editing={editing}
                       onStartEdit={(next) => setEditingKey(commentKey(next))}
                       onSave={(next, body) => {
                         void (async () => {
@@ -403,20 +421,24 @@ export function NativeDiffView({
                         })();
                       }}
                     />
+                    </View>
                   );
                 })}
                 {draftHere && draft ? (
-                  <NativeLineDraftBox
-                    range={draft}
-                    theme={theme}
-                    onSave={saveDraft}
-                    onCancel={() => setDraft(null)}
-                  />
+                  <View ref={assignComposerRef} collapsable={false}>
+                    <NativeLineDraftBox
+                      range={draft}
+                      theme={theme}
+                      onSave={saveDraft}
+                      onCancel={() => setDraft(null)}
+                    />
+                  </View>
                 ) : null}
                 {(gapByBefore.get(line.id) ?? []).map(renderGap)}
               </View>
             );
           })}
+        </View>
         </View>
       </ScrollView>
     </View>

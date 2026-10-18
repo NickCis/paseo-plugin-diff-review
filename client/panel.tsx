@@ -145,6 +145,8 @@ export function DiffReviewPanel({
         gap: 8,
         flexWrap: "wrap" as const,
         flexShrink: 0,
+        position: "relative" as const,
+        zIndex: desktopMenuOpen ? 100 : 1,
       },
       title: {
         color: theme.colors.foreground,
@@ -189,7 +191,7 @@ export function DiffReviewPanel({
         borderColor: theme.colors.border,
         backgroundColor: theme.colors.surface1,
         paddingVertical: 4,
-        zIndex: 40,
+        zIndex: 110,
         elevation: 16,
         shadowColor: "#000",
         shadowOpacity: 0.35,
@@ -216,7 +218,7 @@ export function DiffReviewPanel({
       paneScroll: { flex: 1, minHeight: 0 },
       error: { color: theme.colors.statusDanger, fontSize: 13 },
     }),
-    [layout.compact, theme],
+    [desktopMenuOpen, layout.compact, theme],
   );
 
   if (!review.workspace || review.settings.status === "loading") {
