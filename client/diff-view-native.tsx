@@ -1,133 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
+import { useRpc } from "@getpaseo/plugin/client";
 import { ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
 import { diffPalette } from "./colors";
+import { type DisplayLine, buildDisplay, gapsByBeforeId } from "./diff-display";
+import { DiffLineRow } from "./diff-line-row";
+import { expandAxis, lineInRange, lineNumberForSide, lineSide } from "./diff-line-utils";
+import { ExpandButton } from "./expand-button";
 import { FileHeader } from "./file-header";
 import { InlineCommentCard } from "./inline-comment";
 import { composerKeyProps } from "./keyboard";
 import { commentKey } from "./progress";
-import type { DiffLine } from "../shared/rpc";
+import { diffContextRpc } from "../shared/rpc";
 import type { LineComment } from "../shared/settings";
 import type { DiffViewProps } from "./diff-view-props";
 
-type DisplayLine = DiffLine & { id: string };
-
 type DraftRange = { side: "old" | "new"; startLine: number; endLine: number };
-
-function lineSide(line: DiffLine): "old" | "new" | null {
-  if (line.type === "del") return "old";
-  if (line.type === "add") return "new";
-  if (line.newLineNumber != null) return "new";
-  if (line.oldLineNumber != null) return "old";
-  return null;
-}
-
-function lineNumberForSide(line: DiffLine, side: "old" | "new"): number | null {
-  return side === "new" ? line.newLineNumber : line.oldLineNumber;
-}
-
-function flattenHunks(hunks: DiffViewProps["hunks"]): DisplayLine[] {
-  const lines: DisplayLine[] = [];
-  for (const hunk of hunks) {
-    for (let index = 0; index < hunk.lines.length; index += 1) {
-      const line = hunk.lines[index]!;
-      lines.push({ ...line, id: `${hunk.header}:${index}` });
-    }
-  }
-  return lines;
-}
-
-function NativeLineRow({
-  line,
-  theme,
-  typography,
-  palette,
-  selected,
-  onPress,
-}: {
-  line: DisplayLine;
-  theme: DiffViewProps["theme"];
-  typography: DiffViewProps["typography"];
-  palette: ReturnType<typeof diffPalette>;
-  selected: boolean;
-  onPress(): void;
-}) {
-  let backgroundColor = "transparent";
-  if (selected) backgroundColor = palette.selectBg;
-  else if (line.type === "add") backgroundColor = palette.addBg;
-  else if (line.type === "del") backgroundColor = palette.delBg;
-
-  let prefixColor = theme.colors.foregroundMuted;
-  if (line.type === "add") prefixColor = palette.addFg;
-  else if (line.type === "del") prefixColor = palette.delFg;
-
-  let prefix = " ";
-  if (line.type === "add") prefix = "+";
-  else if (line.type === "del") prefix = "-";
-
-  const side = lineSide(line);
-  const lineNumber = side ? lineNumberForSide(line, side) : null;
-  const disabled = side == null || lineNumber == null;
-
-  const styles = useMemo(
-    () => ({
-      line: {
-        flexDirection: "row" as const,
-        paddingHorizontal: 4,
-        minHeight: typography.lineHeight,
-        alignItems: "flex-start" as const,
-        alignSelf: "stretch" as const,
-        backgroundColor,
-        width: "100%" as const,
-      },
-      gutter: {
-        width: 40,
-        color: theme.colors.foregroundMuted,
-        fontFamily: typography.fontFamily,
-        fontSize: typography.fontSize,
-        lineHeight: typography.lineHeight,
-        textAlign: "right" as const,
-        paddingRight: 6,
-        flexShrink: 0,
-      },
-      prefix: {
-        width: 14,
-        color: prefixColor,
-        fontFamily: typography.fontFamily,
-        fontSize: typography.fontSize,
-        lineHeight: typography.lineHeight,
-        fontWeight: "700" as const,
-        flexShrink: 0,
-      },
-      content: {
-        flexShrink: 1,
-        flexGrow: 1,
-        fontFamily: typography.fontFamily,
-        fontSize: typography.fontSize,
-        lineHeight: typography.lineHeight,
-        color: theme.colors.foreground,
-      },
-    }),
-    [
-      backgroundColor,
-      prefixColor,
-      theme.colors.foreground,
-      theme.colors.foregroundMuted,
-      typography.fontFamily,
-      typography.fontSize,
-      typography.lineHeight,
-    ],
-  );
-
-  return (
-    <Pressable disabled={disabled} onPress={onPress} style={styles.line}>
-      <Text style={styles.gutter}>{line.oldLineNumber ?? ""}</Text>
-      <Text style={styles.gutter}>{line.newLineNumber ?? ""}</Text>
-      <Text style={styles.prefix}>{prefix}</Text>
-      <Text style={styles.content}>{line.content}</Text>
-    </Pressable>
-  );
-}
 
 function NativeLineDraftBox({
   range,
@@ -213,11 +101,12 @@ function NativeLineDraftBox({
   );
 }
 
-/** Native diff renderer — avoids web-only cursor store, nested scroll, and syntax spans. */
+/** Native diff renderer — plain rows, single vertical scroll, shared display logic with web. */
 export function NativeDiffView({
   pathKey,
   displayPath,
   file,
+  cwd,
   status,
   hunks,
   error,
@@ -236,18 +125,31 @@ export function NativeDiffView({
   onSaveLineComment,
   onDeleteLineComment,
 }: DiffViewProps) {
+  const loadContext = useRpc(diffContextRpc);
   const toast = useToast();
   const palette = useMemo(() => diffPalette(theme), [theme]);
-  const lines = useMemo(() => flattenHunks(hunks), [hunks]);
+  const axis = expandAxis(file);
+  const [expanded, setExpanded] = useState<Map<string, DisplayLine[]>>(() => new Map());
+  const [expandingKey, setExpandingKey] = useState<string | null>(null);
+  const [totalLines, setTotalLines] = useState<number | null>(null);
   const [draft, setDraft] = useState<DraftRange | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [fileCommentOpen, setFileCommentOpen] = useState(false);
 
   useEffect(() => {
+    setExpanded(new Map());
+    setExpandingKey(null);
+    setTotalLines(null);
     setDraft(null);
     setEditingKey(null);
     setFileCommentOpen(false);
   }, [pathKey]);
+
+  const { lines, gaps } = useMemo(
+    () => buildDisplay(hunks, expanded, totalLines, axis),
+    [axis, expanded, hunks, totalLines],
+  );
+  const gapByBefore = useMemo(() => gapsByBeforeId(gaps), [gaps]);
 
   const styles = useMemo(
     () => ({
@@ -260,9 +162,44 @@ export function NativeDiffView({
         borderColor: theme.colors.border,
         borderRadius: 6,
         overflow: "hidden" as const,
+        alignSelf: "stretch" as const,
+        width: "100%" as const,
       },
     }),
     [theme],
+  );
+
+  const onExpand = useCallback(
+    async (_gapId: string, startLine: number, endLine: number, side: "old" | "new") => {
+      const key = `${startLine}:${endLine}`;
+      setExpandingKey(key);
+      try {
+        const result = await loadContext({ cwd, pathKey, side, startLine, endLine });
+        if (result.status !== "ok") {
+          toast.error(result.error ?? "Could not expand context");
+          return;
+        }
+        setTotalLines(result.totalLines);
+        const block: DisplayLine[] = result.lines.map((line, index) => ({
+          id: `x:${side}:${line.oldLineNumber ?? line.newLineNumber ?? index}`,
+          type: "context" as const,
+          content: line.content,
+          oldLineNumber: line.oldLineNumber,
+          newLineNumber: line.newLineNumber,
+          source: "expand" as const,
+        }));
+        setExpanded((current) => {
+          const next = new Map(current);
+          next.set(key, block);
+          return next;
+        });
+      } catch (expandError) {
+        toast.error(expandError instanceof Error ? expandError.message : String(expandError));
+      } finally {
+        setExpandingKey(null);
+      }
+    },
+    [cwd, loadContext, pathKey, toast],
   );
 
   const applyTapSelection = useCallback((side: "old" | "new", line: number) => {
@@ -377,12 +314,18 @@ export function NativeDiffView({
       }
     : null;
 
-  const lineInRange = (line: DisplayLine): boolean => {
-    if (!selectionRange) return false;
-    const number = lineNumberForSide(line, selectionRange.side);
-    if (number == null) return false;
-    return number >= selectionRange.startLine && number <= selectionRange.endLine;
-  };
+  const renderGap = (gap: (typeof gaps)[number]) => (
+    <ExpandButton
+      key={gap.id}
+      gapId={gap.id}
+      startLine={gap.startLine}
+      endLine={gap.endLine}
+      totalLines={totalLines}
+      expanding={expandingKey === `${gap.startLine}:${gap.endLine}`}
+      theme={theme}
+      onExpand={(gapId, start, end) => void onExpand(gapId, start, end, gap.side)}
+    />
+  );
 
   return (
     <View style={styles.root}>
@@ -393,14 +336,13 @@ export function NativeDiffView({
             File note: {progress.fileComment}
           </Text>
         ) : null}
-        <Text style={styles.muted}>
-          Tap a line to comment; tap another to set a range.
-        </Text>
+        <Text style={styles.muted}>Tap a line to comment; tap another to set a range.</Text>
         <View style={styles.hunk}>
+          {(gapByBefore.get(null) ?? []).map(renderGap)}
           {lines.map((line) => {
             const side = lineSide(line);
             const lineNumber = side ? lineNumberForSide(line, side) : null;
-            const selected = lineInRange(line);
+            const selected = selectionRange ? lineInRange(line, selectionRange) : false;
             const comments = commentsAfterLine(line);
             const draftHere =
               draft &&
@@ -409,15 +351,18 @@ export function NativeDiffView({
               draft.side === side;
             return (
               <View key={line.id}>
-                <NativeLineRow
+                <DiffLineRow
                   line={line}
                   theme={theme}
-                  typography={typography}
                   palette={palette}
+                  typography={typography}
                   selected={selected}
-                  onPress={() => {
-                    if (side && lineNumber != null) onPressLine(side, lineNumber);
-                  }}
+                  platform={platform}
+                  onPress={
+                    side && lineNumber != null
+                      ? () => onPressLine(side, lineNumber)
+                      : undefined
+                  }
                 />
                 {comments.map((comment) => {
                   const key = commentKey(comment);
@@ -454,6 +399,7 @@ export function NativeDiffView({
                     onCancel={() => setDraft(null)}
                   />
                 ) : null}
+                {(gapByBefore.get(line.id) ?? []).map(renderGap)}
               </View>
             );
           })}

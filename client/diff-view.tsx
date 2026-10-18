@@ -11,9 +11,11 @@ import { Pressable, Text, View } from "react-native";
 import { useRpc, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
 import { diffPalette } from "./colors";
+import { type DisplayLine, buildDisplay, gapsByBeforeId } from "./diff-display";
+import { DiffLineRow } from "./diff-line-row";
+import { expandAxis, lineInRange, lineNumberForSide, lineSide } from "./diff-line-utils";
 import { ExpandButton } from "./expand-button";
 import { FileHeader } from "./file-header";
-import { HighlightedContent } from "./highlight-text";
 import { InlineCommentCard } from "./inline-comment";
 import {
   composerKeyProps,
@@ -31,41 +33,6 @@ import { NativeDiffView } from "./diff-view-native";
 import type { DiffViewProps } from "./diff-view-props";
 
 type Theme = PluginSurfaceProps["theme"];
-
-type DisplayLine = DiffLine & { id: string; source: "hunk" | "expand" };
-
-interface Gap {
-  id: string;
-  side: "old" | "new";
-  startLine: number;
-  endLine: number;
-  beforeId: string | null;
-}
-
-const EXPAND_CHUNK = 20;
-
-function lineSide(line: DiffLine): "old" | "new" | null {
-  if (line.type === "del") return "old";
-  if (line.type === "add") return "new";
-  if (line.newLineNumber != null) return "new";
-  if (line.oldLineNumber != null) return "old";
-  return null;
-}
-
-function lineNumberForSide(line: DiffLine, side: "old" | "new"): number | null {
-  return side === "new" ? line.newLineNumber : line.oldLineNumber;
-}
-
-function lineInRange(
-  line: DiffLine,
-  range: { side: "old" | "new"; startLine: number; endLine: number },
-): boolean {
-  const number = lineNumberForSide(line, range.side);
-  if (number == null) return false;
-  const lo = Math.min(range.startLine, range.endLine);
-  const hi = Math.max(range.startLine, range.endLine);
-  return number >= lo && number <= hi;
-}
 
 type LineRange = { side: "old" | "new"; startLine: number; endLine: number };
 type RowNode = ComponentRef<typeof View>;
@@ -484,125 +451,9 @@ function CursorFollow({
   return null;
 }
 
-function expandAxis(file: DiffFile): "old" | "new" {
-  return file.status === "deleted" ? "old" : "new";
-}
+type DraftRange = { side: "old" | "new"; startLine: number; endLine: number };
 
-function lineAxisNumber(line: DiffLine, axis: "old" | "new"): number | null {
-  return axis === "new" ? line.newLineNumber : line.oldLineNumber;
-}
-
-function buildDisplay(
-  hunks: readonly DiffHunk[],
-  expanded: Map<string, DisplayLine[]>,
-  totalLines: number | null,
-  axis: "old" | "new",
-): {
-  lines: DisplayLine[];
-  gaps: Gap[];
-} {
-  const lines: DisplayLine[] = [];
-  const gaps: Gap[] = [];
-  let previousAxis: number | null = null;
-  let previousId: string | null = null;
-
-  const expandedBlocks = [...expanded.entries()]
-    .map(([key, block]) => {
-      const [startText, endText] = key.split(":");
-      const start = Number(startText);
-      const end = Number(endText);
-      return { start, end, block, key };
-    })
-    .filter((entry) => Number.isFinite(entry.start) && Number.isFinite(entry.end))
-    .sort((left, right) => left.start - right.start);
-
-  const emitChunk = (
-    gapStart: number,
-    gapEnd: number,
-    beforeId: string | null,
-    direction: "up" | "down",
-  ) => {
-    let end = gapEnd;
-    if (totalLines != null) end = Math.min(end, totalLines);
-    if (gapStart > end) return;
-    let chunkStart = gapStart;
-    let chunkEnd = end;
-    if (end - gapStart + 1 > EXPAND_CHUNK) {
-      if (direction === "up") {
-        chunkStart = end - EXPAND_CHUNK + 1;
-        chunkEnd = end;
-      } else {
-        chunkStart = gapStart;
-        chunkEnd = gapStart + EXPAND_CHUNK - 1;
-      }
-    }
-    gaps.push({
-      id: `gap:${axis}:${chunkStart}-${chunkEnd}`,
-      side: axis,
-      startLine: chunkStart,
-      endLine: chunkEnd,
-      beforeId,
-    });
-  };
-
-  const fillGap = (
-    gapStart: number,
-    gapEnd: number,
-    beforeId: string | null,
-    direction: "up" | "down",
-  ) => {
-    let cursor = gapStart;
-    let lastId = beforeId;
-    const blocks = expandedBlocks.filter(
-      (block) => block.end >= gapStart && block.start <= gapEnd,
-    );
-    for (const block of blocks) {
-      if (block.start > cursor) {
-        emitChunk(cursor, block.start - 1, lastId, direction);
-      }
-      for (const line of block.block) {
-        lines.push(line);
-        lastId = line.id;
-      }
-      cursor = Math.max(cursor, block.end + 1);
-    }
-    if (cursor <= gapEnd) emitChunk(cursor, gapEnd, lastId, direction);
-  };
-
-  for (let hunkIndex = 0; hunkIndex < hunks.length; hunkIndex += 1) {
-    const hunk = hunks[hunkIndex]!;
-    const firstAxis =
-      hunk.lines.map((line) => lineAxisNumber(line, axis)).find((value) => value != null) ?? null;
-
-    if (firstAxis != null && previousAxis != null && firstAxis > previousAxis + 1) {
-      fillGap(previousAxis + 1, firstAxis - 1, previousId, "down");
-    } else if (firstAxis != null && previousAxis == null && firstAxis > 1) {
-      fillGap(1, firstAxis - 1, null, "up");
-    }
-
-    for (let lineIndex = 0; lineIndex < hunk.lines.length; lineIndex += 1) {
-      const line = hunk.lines[lineIndex]!;
-      const id = `h${hunkIndex}:${lineIndex}:${line.type}:${line.oldLineNumber ?? "-"}:${line.newLineNumber ?? "-"}`;
-      lines.push({ ...line, id, source: "hunk" });
-      const axisNumber = lineAxisNumber(line, axis);
-      if (axisNumber != null) {
-        previousAxis = axisNumber;
-        previousId = id;
-      }
-    }
-  }
-
-  if (previousAxis != null) {
-    const bottomEnd = totalLines ?? previousAxis + EXPAND_CHUNK;
-    if (previousAxis < bottomEnd) {
-      fillGap(previousAxis + 1, bottomEnd, previousId, "down");
-    }
-  }
-
-  return { lines, gaps };
-}
-
-function DiffLineRow({
+function WebDiffLineRow({
   line,
   theme,
   palette,
@@ -620,7 +471,6 @@ function DiffLineRow({
   theme: Theme;
   palette: ReturnType<typeof diffPalette>;
   typography: DiffTypography;
-  /** Draft/drag highlight. Keyboard selection comes from `store`. */
   selected: boolean;
   store: LineCursorStore;
   rowRef(node: RowNode | null): void;
@@ -631,133 +481,31 @@ function DiffLineRow({
   onDragEndLine(): void;
 }) {
   const mark = useLineMark(store, line.id, platform === "web");
-  const cursor = mark.cursor;
-  const highlighted = selected || mark.selected;
   const side = lineSide(line);
   const lineNumber = side ? lineNumberForSide(line, side) : null;
-  const disabled = side == null || lineNumber == null;
-  let backgroundColor = "transparent";
-  if (highlighted) backgroundColor = palette.selectBg;
-  else if (line.type === "add") backgroundColor = palette.addBg;
-  else if (line.type === "del") backgroundColor = palette.delBg;
-
-  let prefixColor = theme.colors.foregroundMuted;
-  if (line.type === "add") prefixColor = palette.addFg;
-  else if (line.type === "del") prefixColor = palette.delFg;
-
-  let prefix = " ";
-  if (line.type === "add") prefix = "+";
-  else if (line.type === "del") prefix = "-";
-
-  const styles = useMemo(
-    () => ({
-      line: {
-        flexDirection: "row" as const,
-        paddingHorizontal: 4,
-        minHeight: typography.lineHeight,
-        alignItems: "flex-start" as const,
-        alignSelf: "stretch" as const,
-        backgroundColor,
-        borderLeftWidth: 2,
-        borderLeftColor: cursor ? theme.colors.accent : "transparent",
-        width: "100%" as const,
-        minWidth: "100%" as const,
-      },
-      gutter: {
-        width: 40,
-        color: theme.colors.foregroundMuted,
-        fontFamily: typography.fontFamily,
-        fontSize: typography.fontSize,
-        lineHeight: typography.lineHeight,
-        textAlign: "right" as const,
-        paddingRight: 6,
-        flexShrink: 0,
-      },
-      prefix: {
-        width: 14,
-        color: prefixColor,
-        fontFamily: typography.fontFamily,
-        fontSize: typography.fontSize,
-        lineHeight: typography.lineHeight,
-        fontWeight: "700" as const,
-        flexShrink: 0,
-      },
-    }),
-    [
-      backgroundColor,
-      cursor,
-      prefixColor,
-      theme.colors.accent,
-      theme.colors.foregroundMuted,
-      typography.fontFamily,
-      typography.fontSize,
-      typography.lineHeight,
-    ],
-  );
-
-  const press = useCallback(() => {
-    if (side && lineNumber != null) onPressLine(side, lineNumber, line.id);
-  }, [line.id, lineNumber, onPressLine, side]);
-
-  if (platform === "web") {
-    const webProps: Record<string, unknown> = disabled
-      ? {}
-      : {
-          onMouseDown: (event: { button?: number; preventDefault?: () => void }) => {
-            if (event.button != null && event.button !== 0) return;
-            event.preventDefault?.();
-            if (side && lineNumber != null) onDragStartLine(side, lineNumber, line.id);
-          },
-          onMouseEnter: (event: { buttons?: number }) => {
-            if (event.buttons !== 1) return;
-            if (side && lineNumber != null) onDragEnterLine(side, lineNumber);
-          },
-          onMouseUp: () => {
-            onDragEndLine();
-          },
-        };
-    return (
-      <View ref={rowRef} style={styles.line} {...webProps}>
-        <Text style={styles.gutter}>{line.oldLineNumber ?? ""}</Text>
-        <Text style={styles.gutter}>{line.newLineNumber ?? ""}</Text>
-        <Text style={styles.prefix}>{prefix}</Text>
-        <HighlightedContent
-          content={line.content}
-          theme={theme}
-          baseColor={theme.colors.foreground}
-          typography={typography}
-        />
-      </View>
-    );
-  }
 
   return (
-    <View ref={rowRef} style={styles.line}>
-      <Pressable
-        disabled={disabled}
-        onPress={press}
-        style={{
-          flex: 1,
-          flexDirection: "row",
-          alignItems: "flex-start",
-          alignSelf: "stretch",
-        }}
-      >
-        <Text style={styles.gutter}>{line.oldLineNumber ?? ""}</Text>
-        <Text style={styles.gutter}>{line.newLineNumber ?? ""}</Text>
-        <Text style={styles.prefix}>{prefix}</Text>
-        <HighlightedContent
-          content={line.content}
-          theme={theme}
-          baseColor={theme.colors.foreground}
-          typography={typography}
-        />
-      </Pressable>
-    </View>
+    <DiffLineRow
+      line={line}
+      lineId={line.id}
+      theme={theme}
+      palette={palette}
+      typography={typography}
+      selected={selected || mark.selected}
+      cursor={mark.cursor}
+      platform={platform}
+      rowRef={rowRef}
+      onPress={
+        side && lineNumber != null
+          ? () => onPressLine(side, lineNumber, line.id)
+          : undefined
+      }
+      onDragStartLine={onDragStartLine}
+      onDragEnterLine={onDragEnterLine}
+      onDragEndLine={onDragEndLine}
+    />
   );
 }
-
-type DraftRange = { side: "old" | "new"; startLine: number; endLine: number };
 
 /**
  * New-comment composer. Text stays in this component so typing does not re-render the file.
@@ -951,6 +699,7 @@ function WebDiffView({
     () => buildDisplay(hunks, expanded, totalLines, axis),
     [axis, expanded, hunks, totalLines],
   );
+  const gapByBefore = useMemo(() => gapsByBeforeId(gaps), [gaps]);
 
   useLayoutEffect(() => {
     cursorStore.syncLines(lines);
@@ -977,9 +726,6 @@ function WebDiffView({
         alignSelf: "stretch" as const,
         width: "100%" as const,
       },
-      hunkScroll: { width: "100%" as const, alignSelf: "stretch" as const },
-      hunkScrollContent: { flexGrow: 1, minWidth: "100%" as const },
-      hunkInner: { flexGrow: 1, minWidth: "100%" as const, alignSelf: "stretch" as const },
     }),
     [theme],
   );
@@ -1348,12 +1094,18 @@ function WebDiffView({
       }
     : null;
 
-  const gapByBefore = new Map<string | null, Gap[]>();
-  for (const gap of gaps) {
-    const list = gapByBefore.get(gap.beforeId) ?? [];
-    list.push(gap);
-    gapByBefore.set(gap.beforeId, list);
-  }
+  const renderGap = (gap: (typeof gaps)[number]) => (
+    <ExpandButton
+      key={gap.id}
+      gapId={gap.id}
+      startLine={gap.startLine}
+      endLine={gap.endLine}
+      totalLines={totalLines}
+      expanding={expandingKey === `${gap.startLine}:${gap.endLine}`}
+      theme={theme}
+      onExpand={(gapId, start, end) => void onExpand(gapId, start, end, gap.side)}
+    />
+  );
 
   return (
     <View style={styles.root}>
@@ -1372,87 +1124,57 @@ function WebDiffView({
         </Text>
 
         <View style={styles.hunk}>
-          <ScrollView
-            horizontal
-            style={styles.hunkScroll}
-            contentContainerStyle={styles.hunkScrollContent}
-          >
-            <View style={styles.hunkInner}>
-              {(gapByBefore.get(null) ?? []).map((gap) => (
-                <ExpandButton
-                  key={gap.id}
-                  gapId={gap.id}
-                  startLine={gap.startLine}
-                  endLine={gap.endLine}
-                  totalLines={totalLines}
-                  expanding={expandingKey === `${gap.startLine}:${gap.endLine}`}
+          {(gapByBefore.get(null) ?? []).map(renderGap)}
+          {lines.map((line) => {
+            const selected = selectionRange ? lineInRange(line, selectionRange) : false;
+            const comments = commentsAfterLine(line);
+            const draftHere =
+              draft &&
+              lineNumberForSide(line, draft.side) === Math.max(draft.startLine, draft.endLine);
+            return (
+              <View key={line.id}>
+                <WebDiffLineRow
+                  line={line}
                   theme={theme}
-                  onExpand={(gapId, start, end) => void onExpand(gapId, start, end, gap.side)}
+                  palette={palette}
+                  typography={typography}
+                  selected={selected}
+                  store={cursorStore}
+                  rowRef={rowRefFor(line.id)}
+                  platform={platform}
+                  onPressLine={onPressLine}
+                  onDragEnterLine={onDragEnterLine}
+                  onDragStartLine={onDragStartLine}
+                  onDragEndLine={onDragEndLine}
                 />
-              ))}
-              {lines.map((line) => {
-                const selected = selectionRange ? lineInRange(line, selectionRange) : false;
-                const comments = commentsAfterLine(line);
-                const draftHere =
-                  draft &&
-                  lineNumberForSide(line, draft.side) === Math.max(draft.startLine, draft.endLine);
-                return (
-                  <View key={line.id}>
-                    <DiffLineRow
-                      line={line}
+                {comments.map((comment) => {
+                  const key = commentKey(comment);
+                  return (
+                    <InlineCommentCard
+                      key={key}
+                      comment={comment}
                       theme={theme}
-                      palette={palette}
-                      typography={typography}
-                      selected={selected}
-                      store={cursorStore}
-                      rowRef={rowRefFor(line.id)}
-                      platform={platform}
-                      onPressLine={onPressLine}
-                      onDragEnterLine={onDragEnterLine}
-                      onDragStartLine={onDragStartLine}
-                      onDragEndLine={onDragEndLine}
+                      editing={editingKey === key}
+                      onStartEdit={startEditComment}
+                      onSave={(next, body) => void saveEditComment(next, body)}
+                      onCancel={cancelEditComment}
+                      onDelete={(next) => void deleteComment(next)}
                     />
-                    {comments.map((comment) => {
-                      const key = commentKey(comment);
-                      return (
-                        <InlineCommentCard
-                          key={key}
-                          comment={comment}
-                          theme={theme}
-                          editing={editingKey === key}
-                          onStartEdit={startEditComment}
-                          onSave={(next, body) => void saveEditComment(next, body)}
-                          onCancel={cancelEditComment}
-                          onDelete={(next) => void deleteComment(next)}
-                        />
-                      );
-                    })}
-                    {draftHere && draft ? (
-                      <LineDraftBox
-                        range={draft}
-                        bodyRef={draftBodyRef}
-                        theme={theme}
-                        onSave={saveDraft}
-                        onCancel={cancelDraft}
-                      />
-                    ) : null}
-                    {(gapByBefore.get(line.id) ?? []).map((gap) => (
-                      <ExpandButton
-                        key={gap.id}
-                        gapId={gap.id}
-                        startLine={gap.startLine}
-                        endLine={gap.endLine}
-                        totalLines={totalLines}
-                        expanding={expandingKey === `${gap.startLine}:${gap.endLine}`}
-                        theme={theme}
-                        onExpand={(gapId, start, end) => void onExpand(gapId, start, end, gap.side)}
-                      />
-                    ))}
-                  </View>
-                );
-              })}
-            </View>
-          </ScrollView>
+                  );
+                })}
+                {draftHere && draft ? (
+                  <LineDraftBox
+                    range={draft}
+                    bodyRef={draftBodyRef}
+                    theme={theme}
+                    onSave={saveDraft}
+                    onCancel={cancelDraft}
+                  />
+                ) : null}
+                {(gapByBefore.get(line.id) ?? []).map(renderGap)}
+              </View>
+            );
+          })}
         </View>
       </ScrollView>
     </View>
