@@ -1,4 +1,5 @@
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import type { CompactPanelActions } from "./file-header";
 import type { DiffFile, DiffHunk } from "../shared/rpc";
 import type { DiffTypography, FileProgress, LineComment } from "../shared/settings";
 
@@ -19,6 +20,7 @@ export interface DiffViewProps {
   platform: "ios" | "android" | "web";
   canViewFile: boolean;
   keyboardEnabled: boolean;
+  panelActions?: CompactPanelActions;
   onToggleViewed(): void;
   onIgnore(): void;
   onViewFile(): void;

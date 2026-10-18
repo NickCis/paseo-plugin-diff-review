@@ -150,28 +150,27 @@ export function highlightLine(content: string): HighlightSpan[] {
   return spans.length > 0 ? spans : [{ text: content, role: "plain", start: 0 }];
 }
 
-type HighlightColors = {
-  foreground: string;
-  foregroundMuted: string;
-  accent: string;
-  statusSuccess: string;
-  statusWarning: string;
-  syntax?: Readonly<Record<string, string>>;
-};
-
-export function roleColor(role: HighlightSpan["role"], colors: HighlightColors): string {
-  const syntax = colors.syntax ?? {};
+export function roleColor(
+  role: HighlightSpan["role"],
+  colors: {
+    foreground: string;
+    foregroundMuted: string;
+    accent: string;
+    statusSuccess: string;
+    statusWarning: string;
+  },
+): string {
   switch (role) {
     case "comment":
-      return syntax.comment ?? colors.foregroundMuted;
+      return colors.foregroundMuted;
     case "string":
-      return syntax.string ?? colors.statusSuccess;
+      return colors.statusSuccess;
     case "keyword":
-      return syntax.keyword ?? colors.accent;
+      return colors.accent;
     case "number":
-      return syntax.number ?? colors.statusWarning;
+      return colors.statusWarning;
     case "punct":
-      return syntax.punctuation ?? colors.foregroundMuted;
+      return colors.foregroundMuted;
     default:
       return colors.foreground;
   }

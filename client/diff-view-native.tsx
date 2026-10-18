@@ -227,6 +227,7 @@ export function NativeDiffView({
   compact,
   platform,
   canViewFile,
+  panelActions,
   onToggleViewed,
   onIgnore,
   onViewFile,
@@ -331,6 +332,7 @@ export function NativeDiffView({
       onSaveFileComment={onChangeFileComment}
       onViewFile={onViewFile}
       onDiscardFile={onDiscardFile}
+      panelActions={panelActions}
     />
   );
 

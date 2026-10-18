@@ -899,6 +899,7 @@ function WebDiffView({
   platform,
   canViewFile,
   keyboardEnabled,
+  panelActions,
   onToggleViewed,
   onIgnore,
   onViewFile,
@@ -1302,6 +1303,7 @@ function WebDiffView({
       onSaveFileComment={onChangeFileComment}
       onViewFile={onViewFile}
       onDiscardFile={onDiscardFile}
+      panelActions={panelActions}
     />
   );
 
