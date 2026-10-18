@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { TextInput } from "@getpaseo/plugin/client/react-native";
+import { diffCommentBoxStyle } from "./diff-comment-layout";
 import { composerKeyProps } from "./keyboard";
 import type { LineComment } from "../shared/settings";
 
@@ -27,8 +28,7 @@ export function InlineCommentCard({
   const styles = useMemo(
     () => ({
       box: {
-        marginLeft: 88,
-        marginVertical: 4,
+        ...diffCommentBoxStyle,
         padding: 10,
         borderRadius: 8,
         borderWidth: 1,

@@ -14,6 +14,7 @@ import { diffPalette } from "./colors";
 import { type DisplayLine, buildDisplay, gapsByBeforeId } from "./diff-display";
 import { DiffLineRow } from "./diff-line-row";
 import { expandAxis, lineInRange, lineNumberForSide, lineSide } from "./diff-line-utils";
+import { diffCommentBoxStyle } from "./diff-comment-layout";
 import { ExpandButton } from "./expand-button";
 import { FileHeader } from "./file-header";
 import { InlineCommentCard } from "./inline-comment";
@@ -31,6 +32,7 @@ import { diffContextRpc, type DiffFile, type DiffHunk, type DiffLine } from "../
 import type { DiffTypography, FileProgress, LineComment } from "../shared/settings";
 import { NativeDiffView } from "./diff-view-native";
 import type { DiffViewProps } from "./diff-view-props";
+import { useScrollComposerIntoView } from "./use-scroll-composer-into-view";
 
 type Theme = PluginSurfaceProps["theme"];
 
@@ -545,8 +547,7 @@ function LineDraftBox({
   const styles = useMemo(
     () => ({
       box: {
-        marginLeft: 88,
-        marginVertical: 4,
+        ...diffCommentBoxStyle,
         padding: 10,
         borderRadius: 8,
         borderWidth: 1,
@@ -673,6 +674,9 @@ function WebDiffView({
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const composerActive = draft != null || editingKey != null;
+  useScrollComposerIntoView(scrollRef, composerActive);
   const [fileCommentOpen, setFileCommentOpen] = useState(false);
   const cursorStoreRef = useRef<LineCursorStore | null>(null);
   if (cursorStoreRef.current == null) cursorStoreRef.current = new LineCursorStore();
@@ -715,7 +719,11 @@ function WebDiffView({
         width: "100%" as const,
       },
       scroll: { flex: 1, minHeight: 0 },
-      scrollContent: { gap: 12, paddingTop: 12, paddingBottom: 24 },
+      scrollContent: {
+        gap: 12,
+        paddingTop: 12,
+        paddingBottom: composerActive ? 280 : 24,
+      },
       muted: { color: theme.colors.foregroundMuted, fontSize: 13 },
       error: { color: theme.colors.statusDanger, fontSize: 13 },
       hunk: {
@@ -727,7 +735,7 @@ function WebDiffView({
         width: "100%" as const,
       },
     }),
-    [theme],
+    [composerActive, theme],
   );
 
   const onExpand = useCallback(
@@ -1111,7 +1119,13 @@ function WebDiffView({
     <View style={styles.root}>
       {header}
       {platform === "web" ? <CursorFollow store={cursorStore} rowNodes={rowNodes} /> : null}
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
+      >
         {progress.fileComment ? (
           <Text style={styles.muted} numberOfLines={2}>
             File note: {progress.fileComment}

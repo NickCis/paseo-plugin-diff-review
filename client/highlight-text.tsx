@@ -25,23 +25,33 @@ export function HighlightedContent({
   theme,
   baseColor,
   typography,
+  style,
 }: {
   content: string;
   theme: Theme;
   baseColor: string;
   typography: DiffTypography;
+  style?: {
+    flexGrow?: number;
+    flexShrink?: number;
+    fontFamily?: string;
+    fontSize?: number;
+    lineHeight?: number;
+    color?: string;
+  };
 }) {
   const spans = useMemo(() => highlightLine(content), [content]);
   const root = useMemo(
     () => ({
       flexGrow: 1,
-      flexShrink: 0,
+      flexShrink: 1,
       fontFamily: typography.fontFamily,
       fontSize: typography.fontSize,
       lineHeight: typography.lineHeight,
       color: baseColor,
+      ...style,
     }),
-    [baseColor, typography.fontFamily, typography.fontSize, typography.lineHeight],
+    [baseColor, style, typography.fontFamily, typography.fontSize, typography.lineHeight],
   );
   return (
     <Text style={root}>

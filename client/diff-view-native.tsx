@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useRpc } from "@getpaseo/plugin/client";
 import { ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
 import { diffPalette } from "./colors";
+import { diffCommentBoxStyle } from "./diff-comment-layout";
 import { type DisplayLine, buildDisplay, gapsByBeforeId } from "./diff-display";
 import { DiffLineRow } from "./diff-line-row";
 import { expandAxis, lineInRange, lineNumberForSide, lineSide } from "./diff-line-utils";
@@ -14,6 +15,7 @@ import { commentKey } from "./progress";
 import { diffContextRpc } from "../shared/rpc";
 import type { LineComment } from "../shared/settings";
 import type { DiffViewProps } from "./diff-view-props";
+import { useScrollComposerIntoView } from "./use-scroll-composer-into-view";
 
 type DraftRange = { side: "old" | "new"; startLine: number; endLine: number };
 
@@ -39,8 +41,7 @@ function NativeLineDraftBox({
   const styles = useMemo(
     () => ({
       box: {
-        marginLeft: 88,
-        marginVertical: 4,
+        ...diffCommentBoxStyle,
         padding: 10,
         borderRadius: 8,
         borderWidth: 1,
@@ -135,6 +136,9 @@ export function NativeDiffView({
   const [draft, setDraft] = useState<DraftRange | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [fileCommentOpen, setFileCommentOpen] = useState(false);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const composerActive = draft != null || editingKey != null;
+  useScrollComposerIntoView(scrollRef, composerActive);
 
   useEffect(() => {
     setExpanded(new Map());
@@ -155,7 +159,11 @@ export function NativeDiffView({
     () => ({
       root: { flex: 1, minHeight: 0, gap: 0, alignSelf: "stretch" as const, width: "100%" as const },
       scroll: { flex: 1, minHeight: 0 },
-      scrollContent: { gap: 12, paddingTop: 12, paddingBottom: 24 },
+      scrollContent: {
+        gap: 12,
+        paddingTop: 12,
+        paddingBottom: composerActive ? 280 : 24,
+      },
       muted: { color: theme.colors.foregroundMuted, fontSize: 13 },
       hunk: {
         borderWidth: 1,
@@ -166,7 +174,7 @@ export function NativeDiffView({
         width: "100%" as const,
       },
     }),
-    [theme],
+    [composerActive, theme],
   );
 
   const onExpand = useCallback(
@@ -330,7 +338,13 @@ export function NativeDiffView({
   return (
     <View style={styles.root}>
       {header}
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
+      >
         {progress.fileComment ? (
           <Text style={styles.muted} numberOfLines={2}>
             File note: {progress.fileComment}

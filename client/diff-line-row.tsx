@@ -2,6 +2,7 @@ import { useCallback, useMemo, type ComponentRef } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { diffPalette } from "./colors";
+import { HighlightedContent } from "./highlight-text";
 import { lineNumberForSide, lineSide } from "./diff-line-utils";
 import type { DiffLine } from "../shared/rpc";
 import type { DiffTypography } from "../shared/settings";
@@ -23,6 +24,7 @@ export function DiffLineRow({
   onDragEnterLine,
   onDragEndLine,
   lineId = "",
+  syntaxHighlight = true,
 }: {
   line: DiffLine;
   theme: Theme;
@@ -30,6 +32,7 @@ export function DiffLineRow({
   typography: DiffTypography;
   selected: boolean;
   cursor?: boolean;
+  syntaxHighlight?: boolean;
   platform: "ios" | "android" | "web";
   rowRef?(node: RowNode | null): void;
   onPress?(): void;
@@ -115,12 +118,25 @@ export function DiffLineRow({
     ],
   );
 
+  const content =
+    syntaxHighlight && line.content.length > 0 ? (
+      <HighlightedContent
+        content={line.content}
+        theme={theme}
+        baseColor={theme.colors.foreground}
+        typography={typography}
+        style={styles.content}
+      />
+    ) : (
+      <Text style={styles.content}>{line.content}</Text>
+    );
+
   const body = (
     <>
       <Text style={styles.gutter}>{line.oldLineNumber ?? ""}</Text>
       <Text style={styles.gutter}>{line.newLineNumber ?? ""}</Text>
       <Text style={styles.prefix}>{prefix}</Text>
-      <Text style={styles.content}>{line.content}</Text>
+      {content}
     </>
   );
 
