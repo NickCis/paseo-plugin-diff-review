@@ -67,6 +67,9 @@ export function TooltipButton({
   }, [platform]);
   const onHoverOut = useCallback(() => setHovered(false), []);
 
+  const hoverProps =
+    platform === "web" ? { onHoverIn, onHoverOut } : {};
+
   return (
     <View style={wrap}>
       <Pressable
@@ -75,8 +78,7 @@ export function TooltipButton({
         accessibilityHint={label}
         accessibilityState={accessibilityState}
         onPress={onPress}
-        onHoverIn={onHoverIn}
-        onHoverOut={onHoverOut}
+        {...hoverProps}
         style={style}
       >
         {children}
@@ -105,11 +107,13 @@ export function TooltipBox({
   }, [platform]);
   const onHoverOut = useCallback(() => setHovered(false), []);
 
+  const hoverProps =
+    platform === "web" ? { onHoverIn, onHoverOut } : {};
+
   return (
     <Pressable
       accessibilityLabel={label}
-      onHoverIn={onHoverIn}
-      onHoverOut={onHoverOut}
+      {...hoverProps}
       style={[{ position: "relative" }, style]}
     >
       {children}

@@ -296,66 +296,129 @@ export function FileHeader({
           {displayPath}
         </Text>
         <View style={styles.right}>
-          <TooltipBox
-            label={`+${file.additions} −${file.deletions}`}
-            platform={platform}
-            theme={theme}
-          >
-            <View style={styles.stats}>
+          {platform === "web" ? (
+            <TooltipBox
+              label={`+${file.additions} −${file.deletions}`}
+              platform={platform}
+              theme={theme}
+            >
+              <View style={styles.stats}>
+                <Text style={styles.add}>+{file.additions}</Text>
+                <Text style={styles.del}>-{file.deletions}</Text>
+              </View>
+            </TooltipBox>
+          ) : (
+            <View style={styles.stats} accessibilityLabel={`+${file.additions} −${file.deletions}`}>
               <Text style={styles.add}>+{file.additions}</Text>
               <Text style={styles.del}>-{file.deletions}</Text>
             </View>
-          </TooltipBox>
-          <TooltipButton
-            label={viewed ? "Mark as not viewed" : "Mark as viewed"}
-            platform={platform}
-            theme={theme}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: viewed }}
-            onPress={onToggleViewed}
-            style={styles.viewedBox}
-          >
-            <View style={styles.checkbox}>
-              {viewed ? <Icon name="Check" size={12} color="#ffffff" /> : null}
-            </View>
-            <Text style={styles.viewedLabel}>Viewed</Text>
-          </TooltipButton>
-          <TooltipButton
-            label={progress.fileComment ? "Edit file comment" : "Add file comment"}
-            platform={platform}
-            theme={theme}
-            onPress={openComment}
-            style={[styles.iconButton, progress.fileComment ? styles.iconButtonActive : null]}
-          >
-            <Icon
-              name="MessageSquare"
-              size={16}
-              color={progress.fileComment ? theme.colors.accent : theme.colors.foreground}
-            />
-          </TooltipButton>
-          <TooltipButton
-            label={ignored ? "Unignore file" : "Ignore file"}
-            platform={platform}
-            theme={theme}
-            onPress={onIgnore}
-            style={[styles.iconButton, styles.iconButtonDanger]}
-          >
-            <Icon
-              name="EyeOff"
-              size={16}
-              color={ignored ? theme.colors.statusDanger : theme.colors.foreground}
-            />
-          </TooltipButton>
-          <View style={styles.menuAnchor}>
+          )}
+          {platform === "web" ? (
             <TooltipButton
-              label="More actions"
+              label={viewed ? "Mark as not viewed" : "Mark as viewed"}
               platform={platform}
               theme={theme}
-              onPress={toggleMenu}
-              style={styles.iconButton}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: viewed }}
+              onPress={onToggleViewed}
+              style={styles.viewedBox}
             >
-              <Icon name="MoreHorizontal" size={16} color={theme.colors.foreground} />
+              <View style={styles.checkbox}>
+                {viewed ? <Icon name="Check" size={12} color="#ffffff" /> : null}
+              </View>
+              <Text style={styles.viewedLabel}>Viewed</Text>
             </TooltipButton>
+          ) : (
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityLabel={viewed ? "Mark as not viewed" : "Mark as viewed"}
+              accessibilityState={{ checked: viewed }}
+              onPress={onToggleViewed}
+              style={styles.viewedBox}
+            >
+              <View style={styles.checkbox}>
+                {viewed ? <Icon name="Check" size={12} color="#ffffff" /> : null}
+              </View>
+              <Text style={styles.viewedLabel}>Viewed</Text>
+            </Pressable>
+          )}
+          {platform === "web" ? (
+            <TooltipButton
+              label={progress.fileComment ? "Edit file comment" : "Add file comment"}
+              platform={platform}
+              theme={theme}
+              onPress={openComment}
+              style={[styles.iconButton, progress.fileComment ? styles.iconButtonActive : null]}
+            >
+              <Icon
+                name="MessageSquare"
+                size={16}
+                color={progress.fileComment ? theme.colors.accent : theme.colors.foreground}
+              />
+            </TooltipButton>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={progress.fileComment ? "Edit file comment" : "Add file comment"}
+              onPress={openComment}
+              style={[styles.iconButton, progress.fileComment ? styles.iconButtonActive : null]}
+            >
+              <Icon
+                name="MessageSquare"
+                size={16}
+                color={progress.fileComment ? theme.colors.accent : theme.colors.foreground}
+              />
+            </Pressable>
+          )}
+          {platform === "web" ? (
+            <TooltipButton
+              label={ignored ? "Unignore file" : "Ignore file"}
+              platform={platform}
+              theme={theme}
+              onPress={onIgnore}
+              style={[styles.iconButton, styles.iconButtonDanger]}
+            >
+              <Icon
+                name="EyeOff"
+                size={16}
+                color={ignored ? theme.colors.statusDanger : theme.colors.foreground}
+              />
+            </TooltipButton>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={ignored ? "Unignore file" : "Ignore file"}
+              onPress={onIgnore}
+              style={[styles.iconButton, styles.iconButtonDanger]}
+            >
+              <Icon
+                name="EyeOff"
+                size={16}
+                color={ignored ? theme.colors.statusDanger : theme.colors.foreground}
+              />
+            </Pressable>
+          )}
+          <View style={styles.menuAnchor}>
+            {platform === "web" ? (
+              <TooltipButton
+                label="More actions"
+                platform={platform}
+                theme={theme}
+                onPress={toggleMenu}
+                style={styles.iconButton}
+              >
+                <Icon name="MoreHorizontal" size={16} color={theme.colors.foreground} />
+              </TooltipButton>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="More actions"
+                onPress={toggleMenu}
+                style={styles.iconButton}
+              >
+                <Icon name="MoreHorizontal" size={16} color={theme.colors.foreground} />
+              </Pressable>
+            )}
             {menuOpen ? (
               <View
                 style={styles.menuPopover}
@@ -400,46 +463,48 @@ export function FileHeader({
         </View>
       </View>
 
-      <Modal
-        open={commentOpen}
-        onOpenChange={onCommentOpenChange}
-        title="File comment"
-        icon={modalIcon}
-      >
-        <Modal.Content>
-          <TextInput
-            multiline
-            value={draft}
-            onChangeText={setDraft}
-            placeholder="Optional note for this file"
-            placeholderTextColor={theme.colors.foregroundMuted}
-            style={styles.input}
-            autoFocus
-            {...keyProps}
-          />
-          <View style={styles.modalActions}>
-            <Pressable
-              accessibilityRole="button"
-              disabled={savingComment}
-              onPress={saveCommentPress}
-              style={styles.actionPressable}
-            >
-              <Text style={styles.action}>{savingComment ? "Saving…" : "Save"}</Text>
-            </Pressable>
-            {hasComment ? (
+      {commentOpen ? (
+        <Modal
+          open={commentOpen}
+          onOpenChange={onCommentOpenChange}
+          title="File comment"
+          icon={modalIcon}
+        >
+          <Modal.Content>
+            <TextInput
+              multiline
+              value={draft}
+              onChangeText={setDraft}
+              placeholder="Optional note for this file"
+              placeholderTextColor={theme.colors.foregroundMuted}
+              style={styles.input}
+              autoFocus
+              {...keyProps}
+            />
+            <View style={styles.modalActions}>
               <Pressable
                 accessibilityRole="button"
                 disabled={savingComment}
-                onPress={() => void clearComment()}
+                onPress={saveCommentPress}
                 style={styles.actionPressable}
               >
-                <Text style={styles.danger}>Delete</Text>
+                <Text style={styles.action}>{savingComment ? "Saving…" : "Save"}</Text>
               </Pressable>
-            ) : null}
-            <Text style={styles.modalHint}>Ctrl+Enter to save</Text>
-          </View>
-        </Modal.Content>
-      </Modal>
+              {hasComment ? (
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={savingComment}
+                  onPress={() => void clearComment()}
+                  style={styles.actionPressable}
+                >
+                  <Text style={styles.danger}>Delete</Text>
+                </Pressable>
+              ) : null}
+              <Text style={styles.modalHint}>Ctrl+Enter to save</Text>
+            </View>
+          </Modal.Content>
+        </Modal>
+      ) : null}
     </>
   );
 }

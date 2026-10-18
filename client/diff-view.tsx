@@ -1,12 +1,10 @@
 import {
-  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type ComponentRef,
 } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -29,33 +27,10 @@ import {
 import { commentKey } from "./progress";
 import { diffContextRpc, type DiffFile, type DiffHunk, type DiffLine } from "../shared/rpc";
 import type { DiffTypography, FileProgress, LineComment } from "../shared/settings";
+import { NativeDiffView } from "./diff-view-native";
+import type { DiffViewProps } from "./diff-view-props";
 
 type Theme = PluginSurfaceProps["theme"];
-
-interface DiffViewProps {
-  pathKey: string;
-  displayPath: string;
-  file: DiffFile;
-  cwd: string;
-  status: "ok" | "binary" | "too_large" | "missing" | "loading";
-  hunks: readonly DiffHunk[];
-  error: string | null;
-  progress: FileProgress;
-  typography: DiffTypography;
-  theme: Theme;
-  compact: boolean;
-  platform: "ios" | "android" | "web";
-  canViewFile: boolean;
-  keyboardEnabled: boolean;
-  onToggleViewed(): void;
-  onIgnore(): void;
-  onViewFile(): void;
-  /** Returns an error message, or null on success. */
-  onDiscardFile(): Promise<string | null>;
-  onChangeFileComment(body: string): Promise<boolean>;
-  onSaveLineComment(comment: LineComment): Promise<boolean>;
-  onDeleteLineComment(comment: Pick<LineComment, "side" | "startLine" | "endLine">): Promise<boolean>;
-}
 
 type DisplayLine = DiffLine & { id: string; source: "hunk" | "expand" };
 
@@ -466,6 +441,31 @@ function pageCursor(
   store.placePinned(ids[next]!, pin);
 }
 
+/** useSyncExternalStore misbehaves under Hermes-evaluated plugin bundles; subscribe in an effect instead. */
+function useLineMark(store: LineCursorStore, id: string, enabled: boolean): LineMark {
+  const [mark, setMark] = useState<LineMark>(() => (enabled ? store.mark(id) : IDLE_MARK));
+  useEffect(() => {
+    if (!enabled) return;
+    setMark(store.mark(id));
+    return store.subscribeFor(id)(() => {
+      setMark(store.mark(id));
+    });
+  }, [enabled, id, store]);
+  return enabled ? mark : IDLE_MARK;
+}
+
+function useScrollSeq(store: LineCursorStore, enabled: boolean): number {
+  const [seq, setSeq] = useState(() => (enabled ? store.scrollSeq : 0));
+  useEffect(() => {
+    if (!enabled) return;
+    setSeq(store.scrollSeq);
+    return store.subscribeScroll(() => {
+      setSeq(store.scrollSeq);
+    });
+  }, [enabled, store]);
+  return enabled ? seq : 0;
+}
+
 function CursorFollow({
   store,
   rowNodes,
@@ -473,11 +473,7 @@ function CursorFollow({
   store: LineCursorStore;
   rowNodes: { current: Map<string, RowNode> };
 }) {
-  const seq = useSyncExternalStore(
-    store.subscribeScroll,
-    () => store.scrollSeq,
-    () => store.scrollSeq,
-  );
+  const seq = useScrollSeq(store, true);
   useLayoutEffect(() => {
     if (seq === 0) return;
     const id = store.cursorId;
@@ -606,7 +602,7 @@ function buildDisplay(
   return { lines, gaps };
 }
 
-const DiffLineRow = memo(function DiffLineRow({
+function DiffLineRow({
   line,
   theme,
   palette,
@@ -634,11 +630,7 @@ const DiffLineRow = memo(function DiffLineRow({
   onDragStartLine(side: "old" | "new", lineNumber: number, id: string): void;
   onDragEndLine(): void;
 }) {
-  const mark = useSyncExternalStore(
-    store.subscribeFor(line.id),
-    () => store.mark(line.id),
-    () => store.mark(line.id),
-  );
+  const mark = useLineMark(store, line.id, platform === "web");
   const cursor = mark.cursor;
   const highlighted = selected || mark.selected;
   const side = lineSide(line);
@@ -740,19 +732,30 @@ const DiffLineRow = memo(function DiffLineRow({
   }
 
   return (
-    <Pressable ref={rowRef} disabled={disabled} onPress={press} style={styles.line}>
-      <Text style={styles.gutter}>{line.oldLineNumber ?? ""}</Text>
-      <Text style={styles.gutter}>{line.newLineNumber ?? ""}</Text>
-      <Text style={styles.prefix}>{prefix}</Text>
-      <HighlightedContent
-        content={line.content}
-        theme={theme}
-        baseColor={theme.colors.foreground}
-        typography={typography}
-      />
-    </Pressable>
+    <View ref={rowRef} style={styles.line}>
+      <Pressable
+        disabled={disabled}
+        onPress={press}
+        style={{
+          flex: 1,
+          flexDirection: "row",
+          alignItems: "flex-start",
+          alignSelf: "stretch",
+        }}
+      >
+        <Text style={styles.gutter}>{line.oldLineNumber ?? ""}</Text>
+        <Text style={styles.gutter}>{line.newLineNumber ?? ""}</Text>
+        <Text style={styles.prefix}>{prefix}</Text>
+        <HighlightedContent
+          content={line.content}
+          theme={theme}
+          baseColor={theme.colors.foreground}
+          typography={typography}
+        />
+      </Pressable>
+    </View>
   );
-});
+}
 
 type DraftRange = { side: "old" | "new"; startLine: number; endLine: number };
 
@@ -874,7 +877,14 @@ function LineDraftBox({
   );
 }
 
-export function DiffView({
+export function DiffView(props: DiffViewProps) {
+  if (props.platform !== "web") {
+    return <NativeDiffView {...props} />;
+  }
+  return <WebDiffView {...props} />;
+}
+
+function WebDiffView({
   pathKey,
   displayPath,
   file,
@@ -1346,7 +1356,7 @@ export function DiffView({
   return (
     <View style={styles.root}>
       {header}
-      <CursorFollow store={cursorStore} rowNodes={rowNodes} />
+      {platform === "web" ? <CursorFollow store={cursorStore} rowNodes={rowNodes} /> : null}
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         {progress.fileComment ? (
           <Text style={styles.muted} numberOfLines={2}>
