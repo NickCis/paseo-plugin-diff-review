@@ -1,4 +1,6 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { contributeComposerPills } from "./client/composer-pills";
+import { contributeHeaderButtons } from "./client/header-buttons";
 import { DiffReviewPanel } from "./client/panel";
 import { DiffReviewSettings } from "./client/settings-screen";
 
@@ -35,5 +37,10 @@ export default function contribute(client: PluginClientContext) {
       openSettings("diff-review-prompt");
     },
   });
-  return () => {};
+  const removeHeaderButtons = contributeHeaderButtons(client);
+  const removeComposerPills = contributeComposerPills(client);
+  return () => {
+    removeHeaderButtons();
+    removeComposerPills();
+  };
 }
