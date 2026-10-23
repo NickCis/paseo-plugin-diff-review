@@ -2,6 +2,12 @@
   "id": "diff-review",
   "name": "Diff Review",
   "description": "Unstaged workspace and submodule diffs with review progress, comments, and send-to-agent",
+  "icon": "assets/icon.png",
+  "media": [
+    "assets/screenshot-1.png",
+    "assets/screenshot-2.png",
+    "assets/screenshot-3.png"
+  ],
   "requirements": {
     "paseo": ">=0.11.0"
   }

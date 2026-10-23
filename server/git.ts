@@ -8,7 +8,7 @@ export async function runGit(
   options?: { acceptExitCodes?: number[] },
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   try {
-    const result = await execCommand("git", args, {
+    const result = await execCommand("git", ["--literal-pathspecs", ...args], {
       cwd,
       env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" },
       timeout: 60_000,

@@ -5,11 +5,13 @@
   "description": "Unstaged workspace and submodule diffs with review progress, comments, and send-to-agent",
   "files": [
     "paseo-plugin.json",
+    "OVERVIEW.md",
     "index.client.tsx",
     "index.server.ts",
     "client/",
     "server/",
-    "shared/"
+    "shared/",
+    "assets/"
   ],
   "type": "module",
   "scripts": {
