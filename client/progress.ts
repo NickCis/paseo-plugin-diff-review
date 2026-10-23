@@ -1,5 +1,6 @@
 import type { DiffFile } from "../shared/rpc";
 import type { FileProgress, LineComment, ReviewSettingsValues } from "../shared/settings";
+import { treeOrderedFiles } from "./file-tree";
 
 const EMPTY_PROGRESS: FileProgress = {
   status: "unread",
@@ -11,6 +12,48 @@ export function workspaceFiles(
   workspaceId: string,
 ): Record<string, FileProgress> {
   return values.progressByWorkspace[workspaceId]?.files ?? {};
+}
+
+export function getLastSelectedPathKey(
+  values: ReviewSettingsValues,
+  workspaceId: string,
+): string | null {
+  return values.progressByWorkspace[workspaceId]?.lastSelectedPathKey ?? null;
+}
+
+export function withLastSelectedPathKey(
+  values: ReviewSettingsValues,
+  workspaceId: string,
+  pathKey: string | null,
+): ReviewSettingsValues {
+  const workspace = values.progressByWorkspace[workspaceId] ?? { files: {} };
+  if ((workspace.lastSelectedPathKey ?? null) === pathKey) return values;
+  const nextWorkspace = { ...workspace };
+  if (pathKey) nextWorkspace.lastSelectedPathKey = pathKey;
+  else delete nextWorkspace.lastSelectedPathKey;
+  return {
+    ...values,
+    progressByWorkspace: {
+      ...values.progressByWorkspace,
+      [workspaceId]: nextWorkspace,
+    },
+  };
+}
+
+/** Pick the file to show: keep current selection, restore last, or open the first in tree order. */
+export function resolveSelectedPathKey(input: {
+  current: string | null;
+  files: readonly DiffFile[];
+  values: ReviewSettingsValues | null;
+  workspaceId: string;
+}): string | null {
+  const pathKeys = new Set(input.files.map((file) => file.pathKey));
+  if (input.current && pathKeys.has(input.current)) return input.current;
+  const lastSelected = input.values
+    ? getLastSelectedPathKey(input.values, input.workspaceId)
+    : null;
+  if (lastSelected && pathKeys.has(lastSelected)) return lastSelected;
+  return treeOrderedFiles(input.files)[0]?.pathKey ?? null;
 }
 
 export function getFileProgress(
@@ -98,7 +141,41 @@ export function clearWorkspaceComments(
     ...values,
     progressByWorkspace: {
       ...values.progressByWorkspace,
-      [workspaceId]: { files },
+      [workspaceId]: { ...workspace, files },
+    },
+  };
+}
+
+/** After a successful send: clear comments and reset viewed marks. Ignored marks stay. */
+export function clearWorkspaceAfterSend(
+  values: ReviewSettingsValues,
+  workspaceId: string,
+): ReviewSettingsValues {
+  const workspace = values.progressByWorkspace[workspaceId];
+  if (!workspace) return values;
+  let changed = false;
+  const files: Record<string, FileProgress> = {};
+  for (const [pathKey, progress] of Object.entries(workspace.files)) {
+    const hasComment =
+      Boolean(progress.fileComment?.trim()) ||
+      progress.lineComments.some((comment) => comment.body.trim());
+    const wasSeen = progress.status === "seen";
+    if (!hasComment && !wasSeen) {
+      files[pathKey] = progress;
+      continue;
+    }
+    changed = true;
+    const next: FileProgress = { ...progress, lineComments: [] };
+    delete next.fileComment;
+    if (wasSeen) next.status = "unread";
+    files[pathKey] = next;
+  }
+  if (!changed) return values;
+  return {
+    ...values,
+    progressByWorkspace: {
+      ...values.progressByWorkspace,
+      [workspaceId]: { ...workspace, files },
     },
   };
 }
@@ -118,11 +195,18 @@ export function pruneWorkspaceProgress(
     else changed = true;
   }
   if (!changed) return values;
+  const nextWorkspace = { ...workspace, files };
+  if (
+    nextWorkspace.lastSelectedPathKey &&
+    !pathKeys.has(nextWorkspace.lastSelectedPathKey)
+  ) {
+    delete nextWorkspace.lastSelectedPathKey;
+  }
   return {
     ...values,
     progressByWorkspace: {
       ...values.progressByWorkspace,
-      [workspaceId]: { files },
+      [workspaceId]: nextWorkspace,
     },
   };
 }

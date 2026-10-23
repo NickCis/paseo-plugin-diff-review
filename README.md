@@ -53,7 +53,7 @@ host settings, so every client on that daemon shares the same review state.
    whole, and choose whether to include viewed/ignored file lists (off by default; only
    comments are sent otherwise). The prompt comes from settings; eligible viewed files (no
    comments) are `git add`ed afterward. File and line comments are cleared after a successful
-   send. Viewed and ignored marks stay.
+   send, and viewed marks are reset. Ignored marks stay.
 6. Header ⋯ (when the workspace has changes) — **Clear comments**, after a confirmation.
 7. Edit the prompt under **Settings → Diff Review**.
 
@@ -75,8 +75,8 @@ Details live in Paseo’s [publishing guide](https://paseo.sh/docs/plugins/publi
 2. **Publish on npm** — set a real package name and version, drop `"private"`, typecheck,
    `npm pack --dry-run`, then `npm publish`. Keep `@getpaseo/plugin` and host modules in
    `devDependencies` only. Test with `paseo plugin install npm:<name>@<version>`.
-3. **List in the registry** — add an `OVERVIEW.md` beside `paseo-plugin.json` (required for
-   listing; no install commands in that file), optionally `icon` / `media` in the manifest,
+3. **List in the registry** — add an `OVERVIEW.md` beside `paseo-plugin.json` (no install
+   commands in that file), optionally `icon` / `media` in the manifest,
    publish via npm or Git, then submit through
    [getpaseo/plugins](https://github.com/getpaseo/plugins). Registry installs pin the approved
    revision; users do not pick a ref.

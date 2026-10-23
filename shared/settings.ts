@@ -67,6 +67,7 @@ const FileProgressSchema = z.object({
 
 const WorkspaceProgressSchema = z.object({
   files: z.record(z.string(), FileProgressSchema).default({}),
+  lastSelectedPathKey: z.string().optional(),
 });
 
 const DiffTypographySchema = z.object({

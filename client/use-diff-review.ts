@@ -8,11 +8,14 @@ import {
 } from "@getpaseo/plugin/client";
 import {
   countProgress,
+  clearWorkspaceAfterSend,
   deleteLineComment,
   getFileProgress,
   clearWorkspaceComments,
   pruneWorkspaceProgress,
+  resolveSelectedPathKey,
   upsertLineComment,
+  withLastSelectedPathKey,
   withUpdatedFile,
   workspaceFiles,
   workspaceHasComments,
@@ -196,14 +199,23 @@ export function useDiffReview(workspaceId: string) {
       const result = await snapshot({ cwd });
       setFiles(result.files);
       setSnapshotError(result.error);
-      setSelectedPathKey((current) => {
-        if (current && result.files.some((file) => file.pathKey === current)) return current;
-        return result.files[0]?.pathKey ?? null;
-      });
       const pathKeys = new Set(result.files.map((file) => file.pathKey));
+      let resolvedSelection: string | null = null;
+      setSelectedPathKey((current) => {
+        resolvedSelection = resolveSelectedPathKey({
+          current,
+          files: result.files,
+          values: readyRef.current?.values ?? null,
+          workspaceId,
+        });
+        return resolvedSelection;
+      });
       void saveProgress((values) => {
-        const next = pruneWorkspaceProgress(values, workspaceId, pathKeys);
-        return next === values ? values : next;
+        let next = pruneWorkspaceProgress(values, workspaceId, pathKeys);
+        if (resolvedSelection) {
+          next = withLastSelectedPathKey(next, workspaceId, resolvedSelection);
+        }
+        return next;
       });
     } catch (error) {
       setSnapshotError(error instanceof Error ? error.message : String(error));
@@ -217,9 +229,20 @@ export function useDiffReview(workspaceId: string) {
     void refreshSnapshot();
   }, [refreshSnapshot]);
 
-  const selectFile = useCallback((pathKey: string) => {
-    setSelectedPathKey(pathKey);
-  }, []);
+  const persistSelectedFile = useCallback(
+    (pathKey: string) => {
+      setSelectedPathKey(pathKey);
+      void saveProgress((values) => withLastSelectedPathKey(values, workspaceId, pathKey));
+    },
+    [saveProgress, workspaceId],
+  );
+
+  const selectFile = useCallback(
+    (pathKey: string) => {
+      persistSelectedFile(pathKey);
+    },
+    [persistSelectedFile],
+  );
 
   const orderedFiles = useMemo(() => treeOrderedFiles(files), [files]);
 
@@ -234,13 +257,13 @@ export function useDiffReview(workspaceId: string) {
       };
       const next = orderedFiles.slice(index + 1).find((file) => isOpen(file.pathKey));
       if (next) {
-        setSelectedPathKey(next.pathKey);
+        persistSelectedFile(next.pathKey);
         return;
       }
       const wrap = orderedFiles.slice(0, index).find((file) => isOpen(file.pathKey));
-      if (wrap) setSelectedPathKey(wrap.pathKey);
+      if (wrap) persistSelectedFile(wrap.pathKey);
     },
-    [orderedFiles, progress],
+    [orderedFiles, persistSelectedFile, progress],
   );
 
   const typography = ready?.values.diffTypography ?? DEFAULT_TYPOGRAPHY;
@@ -395,19 +418,21 @@ export function useDiffReview(workspaceId: string) {
       setSending(true);
       setStatusMessage(null);
       try {
+        await saveQueueRef.current;
+        const valuesForSend = progressSnapshotRef.current?.values ?? ready.values;
         const result = await sendDiffReview({
           paseo,
           cwd,
           workspaceId,
           workspaceName: workspace?.title?.trim() || workspace?.name || workspaceId,
           files,
-          values: ready.values,
+          values: valuesForSend,
           target,
           reviewComment: sendNote,
           includeFileLists,
           stage,
         });
-        await clearComments();
+        await saveProgress((values) => clearWorkspaceAfterSend(values, workspaceId));
         setStatusMessage(result.statusMessage);
         openAgent?.({ agentId: result.agentId });
         setSendNote("");
@@ -420,13 +445,13 @@ export function useDiffReview(workspaceId: string) {
       }
     },
     [
-      clearComments,
       cwd,
       files,
       includeFileLists,
       paseo,
       ready,
       refreshSnapshot,
+      saveProgress,
       sendNote,
       stage,
       workspace?.name,
