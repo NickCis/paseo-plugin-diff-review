@@ -45,40 +45,37 @@ export function resolveSubmoduleCwd(parentCwd: string, subPath: string): string 
 }
 
 export async function listDirtySubmodulePaths(cwd: string): Promise<string[]> {
-  const { stdout } = await runGit(cwd, ["status", "--porcelain=1"], { acceptExitCodes: [0] });
-  const candidates: string[] = [];
-  for (const line of stdout
-    .split("\n")
-    .map((entry) => entry.trimEnd())
-    .filter(Boolean)) {
-    if (line.length < 4) continue;
-    const indexStatus = line[0];
-    const worktreeStatus = line[1];
-    const dirty =
-      indexStatus === "m" ||
-      indexStatus === "M" ||
-      worktreeStatus === "m" ||
-      worktreeStatus === "M" ||
-      worktreeStatus === "?";
-    if (!dirty) continue;
-    const pathField = line.slice(3);
-    const path = pathField.includes(" -> ")
-      ? (pathField.split(" -> ").at(-1) ?? pathField)
-      : pathField;
-    if (path) candidates.push(path);
+  const { stdout } = await runGit(cwd, ["status", "--porcelain=1", "-z"]);
+  const entries = stdout.split("\0");
+  const candidates = new Set<string>();
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]!;
+    if (entry.length < 4) continue;
+    const index_status = entry[0];
+    const worktree_status = entry[1];
+    // In porcelain -z, a rename or copy lists its destination first,
+    // followed by a separate NUL-terminated source path.
+    if (/[RC]/.test(entry.slice(0, 2))) i++;
+    if (
+      index_status === "m" ||
+      index_status === "M" ||
+      worktree_status === "m" ||
+      worktree_status === "M" ||
+      worktree_status === "?"
+    ) {
+      candidates.add(entry.slice(3));
+    }
   }
-  if (candidates.length === 0) return [];
+  if (candidates.size === 0) return [];
 
-  const { stdout: lsOut } = await runGit(cwd, ["ls-files", "-s", "--", ...candidates], {
-    acceptExitCodes: [0],
-  });
-  const gitlinks: string[] = [];
-  for (const line of lsOut
-    .split("\n")
-    .map((entry) => entry.trimEnd())
-    .filter(Boolean)) {
-    const match = line.match(/^160000 [0-9a-f]+ \d+\t(.+)$/);
-    if (match?.[1]) gitlinks.push(match[1]);
+  // Intersect with index gitlinks in memory so the command length is independent
+  // of the number of dirty paths, including when the SDK uses cmd.exe on Windows.
+  const { stdout: index_entries } = await runGit(cwd, ["ls-files", "--stage", "-z"]);
+  const gitlinks = new Set<string>();
+  for (const entry of index_entries.split("\0")) {
+    if (!entry.startsWith("160000 ")) continue;
+    const path = entry.slice(entry.indexOf("\t") + 1);
+    if (candidates.has(path)) gitlinks.add(path);
   }
-  return gitlinks;
+  return [...gitlinks];
 }
