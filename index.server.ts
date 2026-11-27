@@ -14,8 +14,13 @@ import {
 import { reviewSettings } from "./shared/settings";
 
 export default function contribute(server: PluginServerContext) {
-  server.registerSettings(reviewSettings);
-  server.handle(diffSnapshotRpc, getDiffSnapshot);
+  const settings = server.registerSettings(reviewSettings);
+  server.handle(diffSnapshotRpc, async (input) => {
+    const state = await settings.read();
+    // Invalid stored settings fall back to the defaults (both discovery sources on).
+    const nestedRepos = state.status === "ready" ? state.values.nestedRepos : undefined;
+    return getDiffSnapshot(input, nestedRepos);
+  });
   server.handle(diffHunksRpc, getDiffHunks);
   server.handle(diffContextRpc, getDiffContext);
   server.handle(diffStageRpc, stagePaths);

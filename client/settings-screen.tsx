@@ -7,7 +7,9 @@ import {
   SettingsCard,
   SettingsInput,
   SettingsSection,
+  SettingsSwitch,
 } from "@getpaseo/plugin/client/ui";
+import { NESTED_REPOS_CONFIG_FILE } from "../shared/nested-repos";
 import {
   DEFAULT_DIFF_FONT_FAMILY,
   DEFAULT_DIFF_FONT_SIZE,
@@ -15,6 +17,7 @@ import {
   DEFAULT_PROMPT_TEMPLATE,
   reviewSettings,
   type DiffTypography,
+  type NestedReposSettings,
   type ReviewSettingsValues,
 } from "../shared/settings";
 
@@ -272,6 +275,48 @@ function TypographyEditor({
   );
 }
 
+function NestedReposEditor({ settings }: { settings: ReadySettings }) {
+  const [localError, setLocalError] = useState<string | null>(null);
+  const current = settings.values.nestedRepos;
+
+  const update = useCallback(
+    async (patch: Partial<NestedReposSettings>) => {
+      setLocalError(null);
+      const ok = await settings.save(
+        {
+          ...settings.values,
+          nestedRepos: { ...settings.values.nestedRepos, ...patch },
+        } satisfies ReviewSettingsValues,
+        settings.revision,
+      );
+      if (!ok) setLocalError(settings.saveError ?? "Could not save nested repository settings");
+    },
+    [settings],
+  );
+
+  return (
+    <SettingsSection title="Nested repositories">
+      <SettingsCard>
+        <SettingsSwitch
+          label="Detect cloned repositories"
+          hint="Review untracked or gitignored folders that contain their own .git (for example repos cloned by a paseo.json setup script)."
+          value={current.autoDetect}
+          disabled={settings.saving}
+          onValueChange={(value) => void update({ autoDetect: value })}
+        />
+        <SettingsSwitch
+          label={`Read ${NESTED_REPOS_CONFIG_FILE}`}
+          hint={`Use "repos" and "exclude" path patterns (* and ? match within one folder) from ${NESTED_REPOS_CONFIG_FILE} in the workspace root.`}
+          value={current.configFile}
+          disabled={settings.saving}
+          error={localError}
+          onValueChange={(value) => void update({ configFile: value })}
+        />
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
 export function DiffReviewSettings({ theme }: PluginSurfaceProps) {
   const settings = useSettings(reviewSettings);
   const style = useMemo(() => ({ color: theme.colors.foreground }), [theme]);
@@ -293,6 +338,7 @@ export function DiffReviewSettings({ theme }: PluginSurfaceProps) {
     <>
       <PromptEditor settings={settings} theme={theme} />
       <TypographyEditor settings={settings} theme={theme} />
+      <NestedReposEditor settings={settings} />
     </>
   );
 }
