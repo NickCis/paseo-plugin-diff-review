@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Unstaged workspace and submodule diffs with review progress, comments, and send-to-agent",
+  "license": "MIT",
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",

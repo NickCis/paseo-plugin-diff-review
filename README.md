@@ -113,3 +113,7 @@ paseo plugin reload diff-review   # after edits to an already-installed director
 
 Layout: `client/` UI, `server/` git RPCs, `shared/` contracts. Host modules come from the
 daemon; do not add them as runtime dependencies.
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Nicolas Cisco.
