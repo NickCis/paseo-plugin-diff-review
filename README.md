@@ -57,6 +57,26 @@ host settings, so every client on that daemon shares the same review state.
 6. Header ⋯ (when the workspace has changes) — **Clear comments**, after a confirmation.
 7. Edit the prompt under **Settings → Diff Review**.
 
+## Nested repositories
+
+Dirty submodules are always expanded. Repositories that are not submodules, such as ones a
+`paseo.json` setup script clones into a gitignored folder, are picked up in two ways. Each
+can be turned off under **Settings → Diff Review → Nested repositories**:
+
+- **Detect cloned repositories** (on by default) — untracked or gitignored folders that
+  contain their own `.git`, searched up to 3 levels deep (skipping `node_modules`, `dist`,
+  `target`, …). Only repositories with changes appear in the tree.
+- **Read `.diff-review.json`** (on by default) — an optional file in the workspace root:
+
+  ```json
+  { "repos": ["vendor/*", "services/api"], "exclude": ["vendor/huge-lib"] }
+  ```
+
+  `repos` adds folders that are not found automatically. `exclude` hides nested
+  repositories, including submodules. Paths are relative to the workspace root; `*` and `?`
+  match within one folder name. If the file is invalid, the panel shows an error and
+  reviews everything else as usual.
+
 ## Distribute
 
 Recommended order for sharing this plugin with others:

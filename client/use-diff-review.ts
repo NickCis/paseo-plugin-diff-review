@@ -51,6 +51,7 @@ const EMPTY_SETTINGS: ReviewSettingsValues = {
     lineHeight: DEFAULT_DIFF_LINE_HEIGHT,
     fontFamily: DEFAULT_DIFF_FONT_FAMILY,
   },
+  nestedRepos: { autoDetect: true, configFile: true },
 };
 const EMPTY_FILES: Record<string, typeof EMPTY_PROGRESS> = {};
 const DEFAULT_TYPOGRAPHY: DiffTypography = EMPTY_SETTINGS.diffTypography;

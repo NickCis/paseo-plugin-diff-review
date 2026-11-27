@@ -5,6 +5,7 @@ import { makePathKey } from "../shared/paths";
 import type { DiffFile } from "../shared/rpc";
 import { diffSnapshotRpc } from "../shared/rpc";
 import { listDirtySubmodulePaths, resolveSubmoduleCwd, runGit } from "./git";
+import { listExtraNestedRepos, matchesPattern, type NestedRepoOptions } from "./nested-repos";
 
 type NameStatus = DiffFile["status"];
 
@@ -125,13 +126,31 @@ async function listRepoFiles(cwd: string, submodulePath: string | null): Promise
   return files;
 }
 
+const DEFAULT_NESTED_REPO_OPTIONS: NestedRepoOptions = { autoDetect: true, configFile: true };
+
 export async function getDiffSnapshot(
   input: RpcInput<typeof diffSnapshotRpc>,
+  nestedRepoOptions: NestedRepoOptions = DEFAULT_NESTED_REPO_OPTIONS,
 ): Promise<{ files: DiffFile[]; error: string | null }> {
   try {
-    const parentFiles = await listRepoFiles(input.cwd, null);
-    const dirtySubs = await listDirtySubmodulePaths(input.cwd);
+    const [parentFiles, allDirtySubs, extra] = await Promise.all([
+      listRepoFiles(input.cwd, null),
+      listDirtySubmodulePaths(input.cwd),
+      listExtraNestedRepos(input.cwd, nestedRepoOptions),
+    ]);
+    const dirtySubs = allDirtySubs.filter(
+      (path) => !extra.exclude.some((pattern) => matchesPattern(path, pattern)),
+    );
+    const submoduleSet = new Set(allDirtySubs);
+    const extraRepos = extra.repos.filter((path) => !submoduleSet.has(path)).sort();
+
     const nested: DiffFile[] = [];
+    // Cloned (non-submodule) repos only appear when they have changes; no placeholder rows.
+    for (const repoPath of extraRepos) {
+      const repoCwd = resolveSubmoduleCwd(input.cwd, repoPath);
+      if (!repoCwd) continue;
+      nested.push(...(await listRepoFiles(repoCwd, repoPath)));
+    }
     for (const subPath of dirtySubs.sort()) {
       const subCwd = resolveSubmoduleCwd(input.cwd, subPath);
       if (!subCwd) {
@@ -162,9 +181,14 @@ export async function getDiffSnapshot(
       nested.push(...childFiles);
     }
 
-    // Drop parent gitlink rows when we expanded nested content for that path.
-    const expanded = new Set(dirtySubs);
-    const files = [...parentFiles.filter((file) => !expanded.has(file.path)), ...nested].sort(
+    // Drop parent gitlink rows (and untracked `repo/` rows) for nested repos we handled,
+    // including excluded submodules, which are hidden entirely.
+    const handled = [...allDirtySubs, ...extraRepos];
+    const isHandled = (path: string) => {
+      const normalized = path.replace(/\/+$/, "");
+      return handled.some((repo) => normalized === repo || normalized.startsWith(`${repo}/`));
+    };
+    const files = [...parentFiles.filter((file) => !isHandled(file.path)), ...nested].sort(
       (left, right) => {
         const leftGroup = left.submodulePath ?? "";
         const rightGroup = right.submodulePath ?? "";
@@ -175,7 +199,7 @@ export async function getDiffSnapshot(
       },
     );
 
-    return { files, error: null };
+    return { files, error: extra.warning };
   } catch (error) {
     return {
       files: [],

@@ -76,6 +76,13 @@ const DiffTypographySchema = z.object({
   fontFamily: z.string().min(1).default(DEFAULT_DIFF_FONT_FAMILY),
 });
 
+const NestedReposSchema = z.object({
+  /** Find untracked/gitignored folders that contain their own `.git`. */
+  autoDetect: z.boolean().default(true),
+  /** Read `.diff-review.json` (`repos` / `exclude`) from the workspace root. */
+  configFile: z.boolean().default(true),
+});
+
 export const reviewSettings = defineSettings({
   id: "diff-review",
   scope: "host",
@@ -93,6 +100,7 @@ export const reviewSettings = defineSettings({
       lineHeight: DEFAULT_DIFF_LINE_HEIGHT,
       fontFamily: DEFAULT_DIFF_FONT_FAMILY,
     }),
+    nestedRepos: NestedReposSchema.default({ autoDetect: true, configFile: true }),
   }),
 });
 
@@ -100,3 +108,4 @@ export type ReviewSettingsValues = z.infer<typeof reviewSettings.schema>;
 export type FileProgress = z.infer<typeof FileProgressSchema>;
 export type LineComment = z.infer<typeof LineCommentSchema>;
 export type DiffTypography = z.infer<typeof DiffTypographySchema>;
+export type NestedReposSettings = z.infer<typeof NestedReposSchema>;
