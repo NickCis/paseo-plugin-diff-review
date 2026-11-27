@@ -31,6 +31,8 @@ host settings, so every client on that daemon shares the same review state.
 ## Use
 
 1. Open the **Diff Review** workspace panel (Command Center → **Open Diff Review**).
+   To keep the conversation visible, use Command Center → **Open Diff Review beside** or type
+   `/diff-review` in the composer; both open the panel in the Explorer dock.
 2. Pick a file in the left tree (`+` / `−` / `±` = add-only / delete-only / mixed).
 3. File header:
    - **Viewed** — mark done and advance to the next unfinished file
